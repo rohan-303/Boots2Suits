@@ -1,0 +1,23 @@
+{
+  "name": "boots2suits",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev:web",
+    "dev:web": "npm run dev --workspace @boots2suits/web",
+    "dev:api": "npm run dev --workspace @boots2suits/api",
+    "dev:worker": "npm run dev --workspace @boots2suits/worker",
+    "db:generate": "npm run db:generate --workspace @boots2suits/db",
+    "db:migrate": "npm run db:migrate --workspace @boots2suits/db",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "dependencies": {
+    "pg": "^8.20.0"
+  }
+}

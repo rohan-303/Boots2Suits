@@ -1,0 +1,10 @@
+{
+  "extends": "../config/tsconfig.node.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": ".",
+    "outDir": "dist"
+  },
+  "include": ["src", "drizzle.config.ts"]
+}
