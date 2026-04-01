@@ -20,6 +20,9 @@ export function VeteranDashboardPage() {
         <Link className="font-semibold text-blue-700 underline" to="/app/veteran/recommendations">
           Recommended Jobs
         </Link>
+        <Link className="font-semibold text-blue-700 underline" to="/app/veteran/applications">
+          My Applications
+        </Link>
       </div>
     </section>
   );

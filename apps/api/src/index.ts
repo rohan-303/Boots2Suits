@@ -1,5 +1,6 @@
 import express from "express";
 import { createDbClient } from "@boots2suits/db";
+import { createApplicationsRouter } from "./applications/routes.js";
 import { createAuthRouter } from "./auth/routes.js";
 import { createEmployerRouter } from "./employer/routes.js";
 import { createMilitaryRouter } from "./military/routes.js";
@@ -51,6 +52,15 @@ app.use(
 app.use(
   "/veteran",
   createVeteranRouter({
+    db,
+    cookieName: env.AUTH_COOKIE_NAME,
+    tokenPepper: env.AUTH_TOKEN_PEPPER
+  })
+);
+
+app.use(
+  "/applications",
+  createApplicationsRouter({
     db,
     cookieName: env.AUTH_COOKIE_NAME,
     tokenPepper: env.AUTH_TOKEN_PEPPER

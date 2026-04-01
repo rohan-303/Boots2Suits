@@ -6,8 +6,16 @@ import {
   createDbClient,
   jobPersonas,
   jobs,
-  users
+  users,
+  veteranProfiles
 } from "@boots2suits/db";
+import {
+  createApplicationWithEvent,
+  getLatestApplicationForPair,
+  isActiveApplicationStatus,
+  transitionApplicationStatus,
+  type WorkflowApplicationStatus
+} from "../applications/service.js";
 import { buildAuthMiddleware, type AuthenticatedRequest } from "../auth/middleware.js";
 import { generateJobPersona } from "./persona.js";
 
@@ -128,6 +136,102 @@ export function createEmployerRouter(options: EmployerRouterOptions) {
 
   router.use(auth.optionalAuth);
   router.use(auth.requireRole(["employer", "admin"]));
+
+  async function getOwnedJob(authUserId: string, jobId: string, isAdmin: boolean) {
+    const [job] = await options.db
+      .select({
+        id: jobs.id,
+        companyId: jobs.companyId
+      })
+      .from(jobs)
+      .innerJoin(companies, eq(companies.id, jobs.companyId))
+      .where(isAdmin ? eq(jobs.id, jobId) : and(eq(jobs.id, jobId), eq(companies.ownerUserId, authUserId)))
+      .limit(1);
+    return job ?? null;
+  }
+
+  async function applyEmployerCandidateAction(input: {
+    req: AuthenticatedRequest;
+    res: any;
+    toStatus: WorkflowApplicationStatus;
+    reasonCode: string;
+    note: string;
+  }) {
+    const authUser = input.req.authUser;
+    if (!authUser) {
+      input.res.status(401).json({ ok: false, error: "Authentication required." });
+      return;
+    }
+
+    const jobId = input.req.params.jobId;
+    const veteranProfileId = input.req.params.veteranProfileId;
+
+    const job = await getOwnedJob(authUser.id, jobId, authUser.role === "admin");
+    if (!job) {
+      input.res.status(404).json({ ok: false, error: "Job not found." });
+      return;
+    }
+
+    const [veteran] = await options.db
+      .select({ id: veteranProfiles.id })
+      .from(veteranProfiles)
+      .where(eq(veteranProfiles.id, veteranProfileId))
+      .limit(1);
+
+    if (!veteran) {
+      input.res.status(404).json({ ok: false, error: "Veteran profile not found." });
+      return;
+    }
+
+    const latest = await getLatestApplicationForPair(options.db, veteranProfileId, jobId);
+
+    if (!latest) {
+      const created = await createApplicationWithEvent({
+        db: options.db,
+        veteranProfileId,
+        jobId,
+        status: input.toStatus,
+        source: "employer_action",
+        createdByUserId: authUser.id,
+        reasonCode: input.reasonCode,
+        note: input.note
+      });
+      input.res.status(201).json({ ok: true, application: created, created: true });
+      return;
+    }
+
+    if (latest.status === input.toStatus) {
+      input.res.json({
+        ok: true,
+        application: {
+          id: latest.id,
+          status: latest.status,
+          appliedAt: latest.appliedAt
+        },
+        created: false
+      });
+      return;
+    }
+
+    await transitionApplicationStatus({
+      db: options.db,
+      applicationId: latest.id,
+      fromStatus: latest.status,
+      toStatus: input.toStatus,
+      createdByUserId: authUser.id,
+      reasonCode: input.reasonCode,
+      note: input.note
+    });
+
+    input.res.json({
+      ok: true,
+      application: {
+        id: latest.id,
+        status: input.toStatus
+      },
+      created: false
+    });
+  }
 
   router.get("/profile", async (req: AuthenticatedRequest, res) => {
     const authUser = req.authUser;
@@ -519,6 +623,77 @@ export function createEmployerRouter(options: EmployerRouterOptions) {
         suggestedRoleFamily: persona.suggestedRoleFamily,
         modelVersion: persona.modelVersion,
         sourceSnapshotHash: persona.sourceSnapshotHash
+      }
+    });
+  });
+
+  router.post("/jobs/:jobId/candidates/:veteranProfileId/review", async (req: AuthenticatedRequest, res) => {
+    await applyEmployerCandidateAction({
+      req,
+      res,
+      toStatus: "reviewed",
+      reasonCode: "employer_reviewed_candidate",
+      note: "Employer marked candidate as reviewed."
+    });
+  });
+
+  router.post("/jobs/:jobId/candidates/:veteranProfileId/shortlist", async (req: AuthenticatedRequest, res) => {
+    await applyEmployerCandidateAction({
+      req,
+      res,
+      toStatus: "shortlisted",
+      reasonCode: "employer_shortlisted_candidate",
+      note: "Employer shortlisted candidate from match results."
+    });
+  });
+
+  router.post("/jobs/:jobId/candidates/:veteranProfileId/reject", async (req: AuthenticatedRequest, res) => {
+    await applyEmployerCandidateAction({
+      req,
+      res,
+      toStatus: "rejected",
+      reasonCode: "employer_rejected_candidate",
+      note: "Employer rejected candidate from job pipeline."
+    });
+  });
+
+  router.post("/jobs/:jobId/candidates/:veteranProfileId/reset", async (req: AuthenticatedRequest, res) => {
+    const authUser = req.authUser;
+    if (!authUser) {
+      return res.status(401).json({ ok: false, error: "Authentication required." });
+    }
+
+    const jobId = req.params.jobId;
+    const veteranProfileId = req.params.veteranProfileId;
+    const job = await getOwnedJob(authUser.id, jobId, authUser.role === "admin");
+    if (!job) {
+      return res.status(404).json({ ok: false, error: "Job not found." });
+    }
+
+    const latest = await getLatestApplicationForPair(options.db, veteranProfileId, jobId);
+    if (!latest) {
+      return res.status(404).json({ ok: false, error: "No application/action found to reset." });
+    }
+
+    const fallbackStatus: WorkflowApplicationStatus = isActiveApplicationStatus(latest.status)
+      ? "applied"
+      : "closed";
+
+    await transitionApplicationStatus({
+      db: options.db,
+      applicationId: latest.id,
+      fromStatus: latest.status,
+      toStatus: fallbackStatus,
+      createdByUserId: authUser.id,
+      reasonCode: "employer_reset_candidate_action",
+      note: "Employer reset candidate action state."
+    });
+
+    return res.json({
+      ok: true,
+      application: {
+        id: latest.id,
+        status: fallbackStatus
       }
     });
   });

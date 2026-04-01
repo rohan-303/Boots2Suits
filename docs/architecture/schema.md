@@ -82,6 +82,7 @@ This schema supports the MVP-critical data model for:
 - `location_type`: `onsite`, `hybrid`, `remote`
 - `job_status`: `draft`, `published`, `closed`
 - `application_status`: `applied`, `screening`, `interview`, `offer`, `hired`, `rejected`, `withdrawn`
+  - workflow foundation also supports: `drafted`, `reviewed`, `shortlisted`, `closed`
 - `application_event_type`: `created`, `status_changed`, `note`, `sync`
 
 ## Provenance and Explainability
@@ -136,6 +137,7 @@ The schema enforces low-risk/high-value checks:
 - `packages/db/drizzle/0003_veteran_onboarding_persona_foundation.sql`
 - `packages/db/drizzle/0004_employer_onboarding_job_persona_foundation.sql`
 - `packages/db/drizzle/0005_resume_ingestion_foundation.sql`
+- `packages/db/drizzle/0006_application_workflow_statuses.sql`
 - `packages/db/drizzle/meta/_journal.json`
 
 ## Commands

@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getJobMatchResults, runJobMatching } from "../lib/api";
+import {
+  employerRejectCandidate,
+  employerResetCandidateAction,
+  employerReviewCandidate,
+  employerShortlistCandidate,
+  getJobMatchResults,
+  runJobMatching
+} from "../lib/api";
 import type { EmployerMatchResult } from "../types/matching";
 
 function formatScore(value: number | null) {
@@ -16,6 +23,7 @@ export function EmployerJobMatchesPage() {
   const [jobTitle, setJobTitle] = useState<string>("");
   const [runId, setRunId] = useState<string | null>(null);
   const [results, setResults] = useState<EmployerMatchResult[]>([]);
+  const [actingCandidateId, setActingCandidateId] = useState<string | null>(null);
 
   async function load() {
     if (!jobId) return;
@@ -47,6 +55,32 @@ export function EmployerJobMatchesPage() {
       setError(result.error ?? "Unable to run matching.");
       return;
     }
+    await load();
+  }
+
+  async function handleCandidateAction(
+    veteranProfileId: string,
+    action: "review" | "shortlist" | "reject" | "reset"
+  ) {
+    if (!jobId) return;
+    setActingCandidateId(veteranProfileId);
+    setError(null);
+
+    const result =
+      action === "review"
+        ? await employerReviewCandidate(jobId, veteranProfileId)
+        : action === "shortlist"
+        ? await employerShortlistCandidate(jobId, veteranProfileId)
+        : action === "reject"
+        ? await employerRejectCandidate(jobId, veteranProfileId)
+        : await employerResetCandidateAction(jobId, veteranProfileId);
+
+    setActingCandidateId(null);
+    if (!result.ok) {
+      setError(result.error ?? "Unable to update candidate action.");
+      return;
+    }
+
     await load();
   }
 
@@ -100,6 +134,9 @@ export function EmployerJobMatchesPage() {
                       {result.candidate.militaryBranch ?? "-"} {result.candidate.mosCode ? `(${result.candidate.mosCode})` : ""}
                     </p>
                     <p className="mt-1 text-sm text-slate-700">{result.candidate.personaSummary ?? "-"}</p>
+                    <p className="mt-1 text-xs font-medium text-slate-500">
+                      Pipeline status: {result.application?.status ?? "none"}
+                    </p>
                   </div>
                   <div className="rounded-lg bg-slate-100 px-3 py-2 text-sm">
                     <p>
@@ -137,6 +174,41 @@ export function EmployerJobMatchesPage() {
                       </div>
                     ))}
                   </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={actingCandidateId === result.veteranProfileId}
+                    onClick={() => void handleCandidateAction(result.veteranProfileId, "review")}
+                    className="rounded border border-slate-400 px-3 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                  >
+                    Mark Reviewed
+                  </button>
+                  <button
+                    type="button"
+                    disabled={actingCandidateId === result.veteranProfileId}
+                    onClick={() => void handleCandidateAction(result.veteranProfileId, "shortlist")}
+                    className="rounded bg-emerald-700 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                  >
+                    Shortlist
+                  </button>
+                  <button
+                    type="button"
+                    disabled={actingCandidateId === result.veteranProfileId}
+                    onClick={() => void handleCandidateAction(result.veteranProfileId, "reject")}
+                    className="rounded bg-rose-700 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                  >
+                    Reject
+                  </button>
+                  <button
+                    type="button"
+                    disabled={actingCandidateId === result.veteranProfileId}
+                    onClick={() => void handleCandidateAction(result.veteranProfileId, "reset")}
+                    className="rounded border border-slate-400 px-3 py-1 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                  >
+                    Reset
+                  </button>
                 </div>
               </li>
             ))}

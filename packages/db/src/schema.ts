@@ -72,7 +72,11 @@ export const employmentTypeEnum = pgEnum("employment_type", [
 export const locationTypeEnum = pgEnum("location_type", ["onsite", "hybrid", "remote"]);
 export const jobStatusEnum = pgEnum("job_status", ["draft", "published", "closed"]);
 export const applicationStatusEnum = pgEnum("application_status", [
+  "drafted",
   "applied",
+  "reviewed",
+  "shortlisted",
+  "closed",
   "screening",
   "interview",
   "offer",

@@ -27,6 +27,11 @@ export type EmployerMatchResult = {
   explanationBullets: string[];
   explanationData: unknown;
   topFeatures: MatchFeature[];
+  application: {
+    id: string;
+    status: string;
+    updatedAt: string;
+  } | null;
 };
 
 export type VeteranRecommendation = {
@@ -49,4 +54,9 @@ export type VeteranRecommendation = {
   explanationBullets: string[];
   explanationData: unknown;
   topFeatures: MatchFeature[];
+  application: {
+    id: string;
+    status: string;
+    updatedAt: string;
+  } | null;
 };

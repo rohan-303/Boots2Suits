@@ -17,6 +17,7 @@ import { RoleRedirectPage } from "./pages/RoleRedirectPage";
 import { SignupPage } from "./pages/SignupPage";
 import { VeteranDashboardPage } from "./pages/VeteranDashboardPage";
 import { VeteranOnboardingPage } from "./pages/VeteranOnboardingPage";
+import { VeteranApplicationsPage } from "./pages/VeteranApplicationsPage";
 import { VeteranRecommendedJobsPage } from "./pages/VeteranRecommendedJobsPage";
 import { VeteranProfilePage } from "./pages/VeteranProfilePage";
 import { VeteranPersonaPage } from "./pages/VeteranPersonaPage";
@@ -42,6 +43,7 @@ export function App() {
                 <Route path="/app/veteran/profile" element={<VeteranProfilePage />} />
                 <Route path="/app/veteran/persona" element={<VeteranPersonaPage />} />
                 <Route path="/app/veteran/recommendations" element={<VeteranRecommendedJobsPage />} />
+                <Route path="/app/veteran/applications" element={<VeteranApplicationsPage />} />
               </Route>
             </Route>
             <Route element={<ProtectedRoute roles={["employer", "admin"]} />}>

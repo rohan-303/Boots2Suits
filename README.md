@@ -136,11 +136,23 @@ Role-protection skeleton test routes:
 - `GET /employer/jobs/:jobId`
 - `POST /employer/jobs/:jobId/persona/generate`
 
+Employer shortlist workflow routes:
+
+- `POST /employer/jobs/:jobId/candidates/:veteranProfileId/review`
+- `POST /employer/jobs/:jobId/candidates/:veteranProfileId/shortlist`
+- `POST /employer/jobs/:jobId/candidates/:veteranProfileId/reject`
+- `POST /employer/jobs/:jobId/candidates/:veteranProfileId/reset`
+
 ## Matching MVP routes
 
 - `POST /matching/jobs/:jobId/run`
 - `GET /matching/jobs/:jobId/results`
 - `GET /matching/veterans/:veteranProfileId/jobs`
+
+## Application routes
+
+- `POST /applications`
+- `GET /applications/me`
 
 ## Matching evaluation & calibration
 

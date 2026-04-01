@@ -11,6 +11,7 @@ import {
   candidateJobScores,
   companies,
   createDbClient,
+  applications,
   jobPersonas,
   jobs,
   matchRuns,
@@ -392,6 +393,32 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
       featuresByScoreId.set(feature.candidateJobScoreId, list);
     }
 
+    const veteranIds = rows.map((row) => row.veteranProfileId);
+    const applicationRows =
+      veteranIds.length === 0
+        ? []
+        : await options.db
+            .select({
+              id: applications.id,
+              veteranProfileId: applications.veteranProfileId,
+              status: applications.status,
+              updatedAt: applications.updatedAt
+            })
+            .from(applications)
+            .where(
+              and(
+                eq(applications.jobId, jobId),
+                inArray(applications.veteranProfileId, veteranIds)
+              )
+            )
+            .orderBy(desc(applications.updatedAt));
+    const latestAppByVeteran = new Map<string, (typeof applicationRows)[number]>();
+    for (const app of applicationRows) {
+      if (!latestAppByVeteran.has(app.veteranProfileId)) {
+        latestAppByVeteran.set(app.veteranProfileId, app);
+      }
+    }
+
     return res.json({
       ok: true,
       job,
@@ -426,7 +453,14 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
           featureValue: feature.featureValue,
           featureImpact: toNum(feature.featureImpact),
           reasonCode: feature.reasonCode
-        }))
+        })),
+        application: latestAppByVeteran.get(row.veteranProfileId)
+          ? {
+              id: latestAppByVeteran.get(row.veteranProfileId)!.id,
+              status: latestAppByVeteran.get(row.veteranProfileId)!.status,
+              updatedAt: latestAppByVeteran.get(row.veteranProfileId)!.updatedAt
+            }
+          : null
       }))
     });
   });
@@ -551,6 +585,32 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
         featuresByScoreId.set(feature.candidateJobScoreId, list);
       }
 
+      const jobIds = rows.map((row) => row.jobId);
+      const veteranApps =
+        jobIds.length === 0
+          ? []
+          : await options.db
+              .select({
+                id: applications.id,
+                jobId: applications.jobId,
+                status: applications.status,
+                updatedAt: applications.updatedAt
+              })
+              .from(applications)
+              .where(
+                and(
+                  eq(applications.veteranProfileId, veteranProfileId),
+                  inArray(applications.jobId, jobIds)
+                )
+              )
+              .orderBy(desc(applications.updatedAt));
+      const latestAppByJob = new Map<string, (typeof veteranApps)[number]>();
+      for (const app of veteranApps) {
+        if (!latestAppByJob.has(app.jobId)) {
+          latestAppByJob.set(app.jobId, app);
+        }
+      }
+
       return res.json({
         ok: true,
         veteranProfileId,
@@ -584,7 +644,14 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
             featureValue: feature.featureValue,
             featureImpact: toNum(feature.featureImpact),
             reasonCode: feature.reasonCode
-          }))
+          })),
+          application: latestAppByJob.get(row.jobId)
+            ? {
+                id: latestAppByJob.get(row.jobId)!.id,
+                status: latestAppByJob.get(row.jobId)!.status,
+                updatedAt: latestAppByJob.get(row.jobId)!.updatedAt
+              }
+            : null
         }))
       });
     }

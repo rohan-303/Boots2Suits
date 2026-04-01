@@ -5,6 +5,7 @@ import type {
   EmployerProfile,
   JobPersona
 } from "../types/employer";
+import type { VeteranApplication } from "../types/application";
 import type { EmployerMatchResult, VeteranRecommendation } from "../types/matching";
 import type {
   MilitaryOccupationSearchResult,
@@ -247,4 +248,56 @@ export async function getVeteranJobRecommendations(veteranProfileId: string) {
     } | null;
     results: VeteranRecommendation[];
   }>(`/matching/veterans/${veteranProfileId}/jobs`, { method: "GET" });
+}
+
+export async function createApplication(payload: { jobId: string }) {
+  return request<{
+    ok: true;
+    application: {
+      id: string;
+      status: string;
+      appliedAt: string;
+    };
+  }>("/applications", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function getMyApplications() {
+  return request<{
+    ok: true;
+    applications: VeteranApplication[];
+  }>("/applications/me", { method: "GET" });
+}
+
+export async function employerShortlistCandidate(jobId: string, veteranProfileId: string) {
+  return request<{
+    ok: true;
+    application: { id: string; status: string };
+    created?: boolean;
+  }>(`/employer/jobs/${jobId}/candidates/${veteranProfileId}/shortlist`, { method: "POST" });
+}
+
+export async function employerReviewCandidate(jobId: string, veteranProfileId: string) {
+  return request<{
+    ok: true;
+    application: { id: string; status: string };
+    created?: boolean;
+  }>(`/employer/jobs/${jobId}/candidates/${veteranProfileId}/review`, { method: "POST" });
+}
+
+export async function employerRejectCandidate(jobId: string, veteranProfileId: string) {
+  return request<{
+    ok: true;
+    application: { id: string; status: string };
+    created?: boolean;
+  }>(`/employer/jobs/${jobId}/candidates/${veteranProfileId}/reject`, { method: "POST" });
+}
+
+export async function employerResetCandidateAction(jobId: string, veteranProfileId: string) {
+  return request<{
+    ok: true;
+    application: { id: string; status: string };
+  }>(`/employer/jobs/${jobId}/candidates/${veteranProfileId}/reset`, { method: "POST" });
 }
