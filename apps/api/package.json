@@ -2,15 +2,21 @@
   "name": "@boots2suits/api",
   "private": true,
   "version": "0.1.0",
+  "type": "module",
   "scripts": {
+    "predev": "npm run build --workspace @boots2suits/db",
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
+    "prestart": "npm run build --workspace @boots2suits/db",
     "start": "node dist/index.js",
+    "prelint": "npm run build --workspace @boots2suits/db",
     "lint": "tsc -p tsconfig.json --noEmit",
+    "pretypecheck": "npm run build --workspace @boots2suits/db",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@boots2suits/shared": "0.1.0",
+    "@boots2suits/db": "0.1.0",
+    "drizzle-orm": "^0.45.2",
     "express": "^4.19.2",
     "zod": "^3.23.8"
   },
@@ -21,4 +27,3 @@
     "typescript": "^5.4.5"
   }
 }
-

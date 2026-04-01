@@ -14,9 +14,16 @@ This schema supports the MVP-critical data model for:
 - `users`
   - platform identity
   - includes ATS sync fields: `external_id`, `external_source`, `sync_status`, `last_synced_at`
+- `user_auth_credentials`
+  - password hash records for login authentication
+- `auth_sessions`
+  - revocable session store for httpOnly cookie auth
 - `companies`
   - employer organization
   - includes ATS sync fields
+  - onboarding foundation fields: hiring roles/volume, veteran hiring priority,
+    clearance-sensitive flag, hiring regions, recruiter context, contact preferences,
+    and `profile_completed_at`
 - `military_occupations`
   - structured MOS/occupation reference by branch
 - `veteran_profiles`
@@ -24,14 +31,27 @@ This schema supports the MVP-critical data model for:
   - includes: `mos_code`, `mos_title`, `highest_rank`, `clearance_level`,
     `service_start_date`, `service_end_date`, `discharge_type`,
     `translation_confidence`, `translation_version`
+  - onboarding foundation fields: work authorization, relocation preference,
+    responsibilities summary, guided skills/tools/intent arrays, salary expectation,
+    and completion timestamp
 - `veteran_occupation_history`
   - normalized profile-level MOS history (minimal practical MVP form)
 - `veteran_personas`
   - profile personas by scope (`overall`, `leadership`, `technical`, `culture`)
+  - overall persona supports structured outputs: strengths, role clusters,
+    experience level, leadership/technical profiles, suggested job titles,
+    model version, and source snapshot hash
 - `jobs`
   - job posting + ATS sync fields
+  - structured posting fields for persona-ready modeling:
+    `department`, `must_have_skills`, `nice_to_have_skills`,
+    `required_experience_level`, `clearance_requirement`, `travel_requirement`
 - `job_personas`
   - job personas by scope
+  - deterministic employer-facing persona output fields:
+    `leadership_level`, `execution_vs_strategy`, `environment_type`,
+    `technical_depth`, `suggested_candidate_archetypes`, `priority_signals`,
+    `disqualifiers`, `suggested_role_family`, `model_version`, `source_snapshot_hash`
 - `applications`
   - current application state (no longer hard-unique by profile/job)
   - includes ATS sync fields
@@ -108,6 +128,9 @@ The schema enforces low-risk/high-value checks:
 
 - `packages/db/drizzle/0000_boots2suits_foundation.sql`
 - `packages/db/drizzle/0001_mvp_schema_hardening.sql`
+- `packages/db/drizzle/0002_auth_foundation.sql`
+- `packages/db/drizzle/0003_veteran_onboarding_persona_foundation.sql`
+- `packages/db/drizzle/0004_employer_onboarding_job_persona_foundation.sql`
 - `packages/db/drizzle/meta/_journal.json`
 
 ## Commands
@@ -117,5 +140,9 @@ From repository root:
 ```bash
 npm run db:generate
 npm run db:migrate
+npm run db:seed
 ```
 
+Seed script location:
+
+- `packages/db/src/seed.ts`

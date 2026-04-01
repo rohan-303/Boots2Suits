@@ -114,6 +114,41 @@ export const users = pgTable(
   })
 );
 
+export const userAuthCredentials = pgTable(
+  "user_auth_credentials",
+  {
+    userId: uuid("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    passwordHash: text("password_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    userAuthCredentialsUserIdIdx: index("idx_user_auth_credentials_user_id").on(table.userId)
+  })
+);
+
+export const authSessions = pgTable(
+  "auth_sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    authSessionsTokenHashUnique: unique("auth_sessions_token_hash_unique").on(table.tokenHash),
+    authSessionsUserIdIdx: index("idx_auth_sessions_user_id").on(table.userId),
+    authSessionsExpiresAtIdx: index("idx_auth_sessions_expires_at").on(table.expiresAt),
+    authSessionsRevokedAtIdx: index("idx_auth_sessions_revoked_at").on(table.revokedAt)
+  })
+);
+
 export const companies = pgTable(
   "companies",
   {
@@ -126,6 +161,15 @@ export const companies = pgTable(
     headquarters: text("headquarters"),
     industry: text("industry"),
     size: companySizeEnum("size").default("small"),
+    hiringRoles: jsonb("hiring_roles"),
+    hiringVolume: text("hiring_volume"),
+    veteranHiringPriority: boolean("veteran_hiring_priority").default(false),
+    clearanceSensitiveRoles: boolean("clearance_sensitive_roles").default(false),
+    hiringRegions: jsonb("hiring_regions"),
+    recruiterTitle: text("recruiter_title"),
+    recruiterTeam: text("recruiter_team"),
+    contactPreferences: jsonb("contact_preferences"),
+    profileCompletedAt: timestamp("profile_completed_at", { withTimezone: true }),
     externalId: text("external_id"),
     externalSource: text("external_source"),
     syncStatus: syncStatusEnum("sync_status").notNull().default("pending"),
@@ -185,10 +229,23 @@ export const veteranProfiles = pgTable(
     dischargeType: dischargeTypeEnum("discharge_type"),
     locationCity: text("location_city"),
     locationState: text("location_state"),
+    workAuthorization: text("work_authorization"),
+    relocationPreference: text("relocation_preference"),
+    responsibilitiesSummary: text("responsibilities_summary"),
+    keySkills: jsonb("key_skills"),
+    toolsTechnologies: jsonb("tools_technologies"),
+    leadershipExperience: text("leadership_experience"),
+    industriesOfInterest: jsonb("industries_of_interest"),
+    desiredRoles: jsonb("desired_roles"),
+    preferredIndustries: jsonb("preferred_industries"),
+    salaryExpectationMin: integer("salary_expectation_min"),
+    salaryExpectationMax: integer("salary_expectation_max"),
+    preferredWorkModes: jsonb("preferred_work_modes"),
     resumeText: text("resume_text"),
     civilianSummary: text("civilian_summary"),
     translationConfidence: numeric("translation_confidence", { precision: 4, scale: 3 }),
     translationVersion: text("translation_version"),
+    profileCompletedAt: timestamp("profile_completed_at", { withTimezone: true }),
     embedding: vector("embedding", { dimensions: 1536 }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
@@ -214,6 +271,10 @@ export const veteranProfiles = pgTable(
     translationConfidenceBounds: check(
       "veteran_profiles_translation_confidence_bounds",
       sql`${table.translationConfidence} IS NULL OR (${table.translationConfidence} >= 0 AND ${table.translationConfidence} <= 1)`
+    ),
+    salaryExpectationValid: check(
+      "veteran_profiles_salary_expectation_valid",
+      sql`${table.salaryExpectationMin} IS NULL OR ${table.salaryExpectationMax} IS NULL OR ${table.salaryExpectationMin} <= ${table.salaryExpectationMax}`
     )
   })
 );
@@ -263,6 +324,13 @@ export const veteranPersonas = pgTable(
     scope: personaScopeEnum("scope").notNull().default("overall"),
     summary: text("summary").notNull(),
     strengths: jsonb("strengths"),
+    roleClusters: jsonb("role_clusters"),
+    experienceLevel: text("experience_level"),
+    leadershipProfile: text("leadership_profile"),
+    technicalProfile: text("technical_profile"),
+    suggestedJobTitles: jsonb("suggested_job_titles"),
+    modelVersion: text("model_version"),
+    sourceSnapshotHash: text("source_snapshot_hash"),
     gaps: jsonb("gaps"),
     embedding: vector("embedding", { dimensions: 1536 }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -289,6 +357,7 @@ export const jobs = pgTable(
       onDelete: "set null"
     }),
     title: text("title").notNull(),
+    department: text("department"),
     locationCity: text("location_city"),
     locationState: text("location_state"),
     locationType: locationTypeEnum("location_type").notNull().default("onsite"),
@@ -299,6 +368,11 @@ export const jobs = pgTable(
     currency: text("currency").default("USD"),
     description: text("description").notNull(),
     requirements: text("requirements"),
+    mustHaveSkills: jsonb("must_have_skills"),
+    niceToHaveSkills: jsonb("nice_to_have_skills"),
+    requiredExperienceLevel: text("required_experience_level"),
+    clearanceRequirement: text("clearance_requirement"),
+    travelRequirement: text("travel_requirement"),
     externalId: text("external_id"),
     externalSource: text("external_source"),
     syncStatus: syncStatusEnum("sync_status").notNull().default("pending"),
@@ -334,6 +408,16 @@ export const jobPersonas = pgTable(
     summary: text("summary").notNull(),
     requiredTraits: jsonb("required_traits"),
     preferredTraits: jsonb("preferred_traits"),
+    leadershipLevel: text("leadership_level"),
+    executionVsStrategy: text("execution_vs_strategy"),
+    environmentType: text("environment_type"),
+    technicalDepth: text("technical_depth"),
+    suggestedCandidateArchetypes: jsonb("suggested_candidate_archetypes"),
+    prioritySignals: jsonb("priority_signals"),
+    disqualifiers: jsonb("disqualifiers"),
+    suggestedRoleFamily: text("suggested_role_family"),
+    modelVersion: text("model_version"),
+    sourceSnapshotHash: text("source_snapshot_hash"),
     embedding: vector("embedding", { dimensions: 1536 }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
@@ -522,4 +606,3 @@ export const candidateJobScoreFeatures = pgTable(
     )
   })
 );
-

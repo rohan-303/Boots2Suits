@@ -2,6 +2,6 @@
   "extends": "../../packages/config/tsconfig.web.json",
   "compilerOptions": {
     "baseUrl": "."
-  }
+  },
+  "include": ["src", "vite.config.ts"]
 }
-

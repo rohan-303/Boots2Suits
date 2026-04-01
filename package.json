@@ -13,6 +13,7 @@
     "dev:worker": "npm run dev --workspace @boots2suits/worker",
     "db:generate": "npm run db:generate --workspace @boots2suits/db",
     "db:migrate": "npm run db:migrate --workspace @boots2suits/db",
+    "db:seed": "npm run db:seed --workspace @boots2suits/db",
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"

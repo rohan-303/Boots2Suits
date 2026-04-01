@@ -1,5 +1,6 @@
 import { relations } from "drizzle-orm";
 import {
+  authSessions,
   applicationEvents,
   applications,
   candidateJobScoreFeatures,
@@ -10,16 +11,36 @@ import {
   matchRuns,
   militaryOccupations,
   users,
+  userAuthCredentials,
   veteranOccupationHistory,
   veteranPersonas,
   veteranProfiles
 } from "./schema.js";
 
-export const usersRelations = relations(users, ({ many }) => ({
+export const usersRelations = relations(users, ({ one, many }) => ({
+  credentials: one(userAuthCredentials, {
+    fields: [users.id],
+    references: [userAuthCredentials.userId]
+  }),
+  authSessions: many(authSessions),
   veteranProfiles: many(veteranProfiles),
   companies: many(companies),
   postedJobs: many(jobs),
   applicationEvents: many(applicationEvents)
+}));
+
+export const userAuthCredentialsRelations = relations(userAuthCredentials, ({ one }) => ({
+  user: one(users, {
+    fields: [userAuthCredentials.userId],
+    references: [users.id]
+  })
+}));
+
+export const authSessionsRelations = relations(authSessions, ({ one }) => ({
+  user: one(users, {
+    fields: [authSessions.userId],
+    references: [users.id]
+  })
 }));
 
 export const companiesRelations = relations(companies, ({ one, many }) => ({
@@ -139,4 +160,3 @@ export const candidateJobScoreFeaturesRelations = relations(
     })
   })
 );
-

@@ -1,24 +1,71 @@
-import { SERVICE_NAMES } from "@boots2suits/shared";
+import { Navigate, Route, Routes } from "react-router-dom";
+import { AuthProvider } from "./auth/AuthProvider";
+import { AppShell } from "./components/AppShell";
+import { EmployerProfileGate } from "./components/EmployerProfileGate";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import { PublicOnlyRoute } from "./components/PublicOnlyRoute";
+import { AdminDashboardPage } from "./pages/AdminDashboardPage";
+import { EmployerDashboardPage } from "./pages/EmployerDashboardPage";
+import { EmployerJobDetailPage } from "./pages/EmployerJobDetailPage";
+import { EmployerJobMatchesPage } from "./pages/EmployerJobMatchesPage";
+import { EmployerJobPersonaPage } from "./pages/EmployerJobPersonaPage";
+import { EmployerJobsPage } from "./pages/EmployerJobsPage";
+import { EmployerOnboardingPage } from "./pages/EmployerOnboardingPage";
+import { EmployerProfilePage } from "./pages/EmployerProfilePage";
+import { LoginPage } from "./pages/LoginPage";
+import { RoleRedirectPage } from "./pages/RoleRedirectPage";
+import { SignupPage } from "./pages/SignupPage";
+import { VeteranDashboardPage } from "./pages/VeteranDashboardPage";
+import { VeteranOnboardingPage } from "./pages/VeteranOnboardingPage";
+import { VeteranRecommendedJobsPage } from "./pages/VeteranRecommendedJobsPage";
+import { VeteranProfilePage } from "./pages/VeteranProfilePage";
+import { VeteranPersonaPage } from "./pages/VeteranPersonaPage";
+import { VeteranProfileGate } from "./components/VeteranProfileGate";
 
 export function App() {
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900">
-      <section className="mx-auto max-w-3xl p-10">
-        <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">
-          Phase 0 Foundation
-        </p>
-        <h1 className="mt-3 text-3xl font-bold">Boots2Suits</h1>
-        <p className="mt-4 text-base leading-7 text-slate-600">
-          Frontend workspace is ready. Connect this app to the API and worker in
-          subsequent phases.
-        </p>
-        <ul className="mt-6 list-disc pl-6 text-sm text-slate-700">
-          <li>Web service: {SERVICE_NAMES.web}</li>
-          <li>API service: {SERVICE_NAMES.api}</li>
-          <li>Worker service: {SERVICE_NAMES.worker}</li>
-        </ul>
-      </section>
-    </main>
+    <AuthProvider>
+      <Routes>
+        <Route element={<PublicOnlyRoute />}>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/signup" element={<SignupPage />} />
+        </Route>
+
+        <Route element={<ProtectedRoute />}>
+          <Route element={<AppShell />}>
+            <Route path="/" element={<RoleRedirectPage />} />
+            <Route path="/app" element={<RoleRedirectPage />} />
+            <Route element={<ProtectedRoute roles={["veteran", "admin"]} />}>
+              <Route element={<VeteranProfileGate />}>
+                <Route path="/app/veteran/onboarding" element={<VeteranOnboardingPage />} />
+                <Route path="/app/veteran" element={<VeteranDashboardPage />} />
+                <Route path="/app/veteran/profile" element={<VeteranProfilePage />} />
+                <Route path="/app/veteran/persona" element={<VeteranPersonaPage />} />
+                <Route path="/app/veteran/recommendations" element={<VeteranRecommendedJobsPage />} />
+              </Route>
+            </Route>
+            <Route element={<ProtectedRoute roles={["employer", "admin"]} />}>
+              <Route element={<EmployerProfileGate />}>
+                <Route path="/app/employer/onboarding" element={<EmployerOnboardingPage />} />
+                <Route path="/app/employer" element={<EmployerDashboardPage />} />
+                <Route path="/app/employer/profile" element={<EmployerProfilePage />} />
+                <Route path="/app/employer/jobs" element={<EmployerJobsPage />} />
+                <Route path="/app/employer/jobs/:jobId" element={<EmployerJobDetailPage />} />
+                <Route path="/app/employer/jobs/:jobId/matches" element={<EmployerJobMatchesPage />} />
+                <Route
+                  path="/app/employer/jobs/:jobId/persona"
+                  element={<EmployerJobPersonaPage />}
+                />
+              </Route>
+            </Route>
+            <Route element={<ProtectedRoute roles={["admin"]} />}>
+              <Route path="/app/admin" element={<AdminDashboardPage />} />
+            </Route>
+          </Route>
+        </Route>
+
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AuthProvider>
   );
 }
-

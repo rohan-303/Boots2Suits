@@ -70,6 +70,18 @@ API:
 npm run dev:api
 ```
 
+API requires `apps/api/.env` with:
+
+```bash
+API_PORT=4000
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/boots2suits
+CORS_ORIGIN=http://localhost:5173
+AUTH_COOKIE_NAME=boots2suits_session
+AUTH_COOKIE_SECURE=false
+AUTH_SESSION_TTL_DAYS=7
+AUTH_TOKEN_PEPPER=change-me-to-a-long-random-secret
+```
+
 Worker:
 
 ```bash
@@ -84,9 +96,54 @@ npm run typecheck
 npm run build
 ```
 
+## Database seed (development)
+
+After migrations, seed realistic Boots2Suits development data:
+
+```bash
+npm run db:seed
+```
+
+The seed script is safe to rerun for local development. It uses fixed IDs and
+`ON CONFLICT DO NOTHING` behavior to avoid duplicate inserts.
+
+## Auth routes (foundation)
+
+- `POST /auth/signup` (veteran/employer roles only)
+- `POST /auth/login`
+- `POST /auth/logout`
+- `GET /auth/me`
+
+Role-protection skeleton test routes:
+
+- `GET /auth/role-test/veteran` (veteran/admin)
+- `GET /auth/role-test/employer` (employer/admin)
+- `GET /auth/role-test/admin` (admin only)
+
+## Veteran onboarding routes (foundation)
+
+- `GET /veteran/profile`
+- `POST /veteran/profile`
+- `POST /veteran/persona/generate`
+
+## Employer onboarding + jobs routes (foundation)
+
+- `GET /employer/profile`
+- `POST /employer/profile`
+- `GET /employer/jobs`
+- `POST /employer/jobs`
+- `GET /employer/jobs/:jobId`
+- `POST /employer/jobs/:jobId/persona/generate`
+
+## Matching MVP routes
+
+- `POST /matching/jobs/:jobId/run`
+- `GET /matching/jobs/:jobId/results`
+- `GET /matching/veterans/:veteranProfileId/jobs`
+
 ## Notes
 
 - This phase intentionally avoids product features and business logic.
-- API currently exposes a simple `/health` endpoint for startup validation.
+- API startup validates `DATABASE_URL`, checks DB connectivity before listening,
+  and exposes `/health` with live database status.
 - Worker currently validates Redis connectivity and queue readiness only.
-
