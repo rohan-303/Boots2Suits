@@ -86,6 +86,12 @@ export const applicationEventTypeEnum = pgEnum("application_event_type", [
   "note",
   "sync"
 ]);
+export const veteranDocumentTypeEnum = pgEnum("veteran_document_type", ["resume"]);
+export const resumeParseStatusEnum = pgEnum("resume_parse_status", [
+  "uploaded",
+  "parsed",
+  "failed"
+]);
 
 export const users = pgTable(
   "users",
@@ -343,6 +349,50 @@ export const veteranPersonas = pgTable(
     ),
     veteranPersonasProfileIdx: index("idx_veteran_personas_profile_id").on(table.veteranProfileId),
     veteranPersonasScopeIdx: index("idx_veteran_personas_scope").on(table.scope)
+  })
+);
+
+export const veteranDocuments = pgTable(
+  "veteran_documents",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    veteranProfileId: uuid("veteran_profile_id")
+      .notNull()
+      .references(() => veteranProfiles.id, { onDelete: "cascade" }),
+    documentType: veteranDocumentTypeEnum("document_type").notNull().default("resume"),
+    isActive: boolean("is_active").notNull().default(true),
+    originalFilename: text("original_filename").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    storagePath: text("storage_path").notNull(),
+    parserVersion: text("parser_version"),
+    parseStatus: resumeParseStatusEnum("parse_status").notNull().default("uploaded"),
+    parseConfidence: numeric("parse_confidence", { precision: 4, scale: 3 }),
+    parseError: text("parse_error"),
+    parsedData: jsonb("parsed_data"),
+    uploadedByUserId: uuid("uploaded_by_user_id").references(() => users.id, {
+      onDelete: "set null"
+    }),
+    replacedByDocumentId: uuid("replaced_by_document_id"),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    parsedAt: timestamp("parsed_at", { withTimezone: true })
+  },
+  (table) => ({
+    veteranDocumentsProfileTypeIdx: index("idx_veteran_documents_profile_type").on(
+      table.veteranProfileId,
+      table.documentType
+    ),
+    veteranDocumentsActiveIdx: index("idx_veteran_documents_active").on(
+      table.veteranProfileId,
+      table.isActive
+    ),
+    veteranDocumentsUploadedByIdx: index("idx_veteran_documents_uploaded_by_user_id").on(
+      table.uploadedByUserId
+    ),
+    parseConfidenceBounds: check(
+      "veteran_documents_parse_confidence_bounds",
+      sql`${table.parseConfidence} IS NULL OR (${table.parseConfidence} >= 0 AND ${table.parseConfidence} <= 1)`
+    )
   })
 );
 

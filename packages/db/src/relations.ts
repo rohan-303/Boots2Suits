@@ -13,6 +13,7 @@ import {
   users,
   userAuthCredentials,
   veteranOccupationHistory,
+  veteranDocuments,
   veteranPersonas,
   veteranProfiles
 } from "./schema.js";
@@ -24,6 +25,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   }),
   authSessions: many(authSessions),
   veteranProfiles: many(veteranProfiles),
+  veteranDocuments: many(veteranDocuments),
   companies: many(companies),
   postedJobs: many(jobs),
   applicationEvents: many(applicationEvents)
@@ -61,6 +63,7 @@ export const veteranProfilesRelations = relations(veteranProfiles, ({ one, many 
     references: [users.id]
   }),
   personas: many(veteranPersonas),
+  documents: many(veteranDocuments),
   occupationHistory: many(veteranOccupationHistory),
   applications: many(applications),
   candidateScores: many(candidateJobScores)
@@ -84,6 +87,17 @@ export const veteranPersonasRelations = relations(veteranPersonas, ({ one }) => 
   profile: one(veteranProfiles, {
     fields: [veteranPersonas.veteranProfileId],
     references: [veteranProfiles.id]
+  })
+}));
+
+export const veteranDocumentsRelations = relations(veteranDocuments, ({ one }) => ({
+  profile: one(veteranProfiles, {
+    fields: [veteranDocuments.veteranProfileId],
+    references: [veteranProfiles.id]
+  }),
+  uploadedByUser: one(users, {
+    fields: [veteranDocuments.uploadedByUserId],
+    references: [users.id]
   })
 }));
 

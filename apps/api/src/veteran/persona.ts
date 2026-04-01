@@ -14,6 +14,11 @@ type ProfileInput = {
   industriesOfInterest: string[];
   desiredRoles: string[];
   preferredIndustries: string[];
+  parsedResumeSignals?: {
+    summary: string | null;
+    skills: string[];
+    inferredRoles: string[];
+  };
 };
 
 type PersonaOutput = {
@@ -50,7 +55,7 @@ function experienceLevel(yearsOfService: number | null) {
 function mapRoleClusters(input: ProfileInput) {
   const clusters = new Set<string>();
   const mos = (input.mosCode ?? "").toLowerCase();
-  const skills = normalize(input.keySkills);
+  const skills = normalize([...input.keySkills, ...(input.parsedResumeSignals?.skills ?? [])]);
   const tools = normalize(input.toolsTechnologies);
   const interests = normalize(input.industriesOfInterest);
 
@@ -85,7 +90,7 @@ function mapRoleClusters(input: ProfileInput) {
 
 function buildStrengths(input: ProfileInput, clusters: string[]) {
   const strengths = new Set<string>();
-  const skills = normalize(input.keySkills);
+  const skills = normalize([...input.keySkills, ...(input.parsedResumeSignals?.skills ?? [])]);
 
   if ((input.yearsOfService ?? 0) >= 6) strengths.add("sustained performance in high-accountability environments");
   if ((input.leadershipExperience ?? "").length > 0) strengths.add("people leadership and team coordination");
@@ -101,7 +106,9 @@ function buildStrengths(input: ProfileInput, clusters: string[]) {
 }
 
 function suggestedTitles(input: ProfileInput, clusters: string[]) {
-  const desired = unique(normalize(input.desiredRoles));
+  const desired = unique(
+    normalize([...input.desiredRoles, ...(input.parsedResumeSignals?.inferredRoles ?? [])])
+  );
   const seeded: string[] = [];
 
   if (clusters.includes("operations-leadership")) {
@@ -144,7 +151,10 @@ export function generateOverallVeteranPersona(input: ProfileInput): PersonaOutpu
     input.fullName ? `${input.fullName} is a ${level}-level veteran professional.` : "Veteran professional profile.",
     input.mosTitle ? `Military background includes ${input.mosTitle}${input.mosCode ? ` (${input.mosCode})` : ""}.` : "Military occupation details provided.",
     `Primary role clusters: ${clusters.join(", ")}.`,
-    `Top strengths: ${strengths.slice(0, 3).join("; ")}.`
+    `Top strengths: ${strengths.slice(0, 3).join("; ")}.`,
+    input.parsedResumeSignals?.summary
+      ? `Resume signal: ${input.parsedResumeSignals.summary}`
+      : ""
   ].join(" ");
 
   const sourcePayload = JSON.stringify({
@@ -155,11 +165,14 @@ export function generateOverallVeteranPersona(input: ProfileInput): PersonaOutpu
     rank: input.highestRank,
     years: input.yearsOfService,
     responsibilities: input.responsibilitiesSummary,
-    keySkills: normalize(input.keySkills),
+    keySkills: normalize([...input.keySkills, ...(input.parsedResumeSignals?.skills ?? [])]),
     tools: normalize(input.toolsTechnologies),
     leadership: input.leadershipExperience,
     industries: normalize(input.industriesOfInterest),
-    desiredRoles: normalize(input.desiredRoles),
+    desiredRoles: normalize([
+      ...input.desiredRoles,
+      ...(input.parsedResumeSignals?.inferredRoles ?? [])
+    ]),
     preferredIndustries: normalize(input.preferredIndustries)
   });
 
@@ -173,8 +186,7 @@ export function generateOverallVeteranPersona(input: ProfileInput): PersonaOutpu
     leadershipProfile,
     technicalProfile,
     suggestedJobTitles: titles,
-    modelVersion: "persona-rule-v1",
+    modelVersion: "persona-rule-v1.1",
     sourceSnapshotHash
   };
 }
-

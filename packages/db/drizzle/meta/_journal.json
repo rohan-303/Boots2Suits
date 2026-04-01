@@ -36,6 +36,13 @@
       "when": 1774887000000,
       "tag": "0004_employer_onboarding_job_persona_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1774890600000,
+      "tag": "0005_resume_ingestion_foundation",
+      "breakpoints": true
     }
   ]
 }

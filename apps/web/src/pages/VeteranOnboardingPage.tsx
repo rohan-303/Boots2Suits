@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { saveVeteranProfile } from "../lib/api";
+import { saveVeteranProfile, searchMilitaryOccupations } from "../lib/api";
+import type { MilitaryOccupationSearchResult } from "../types/veteran";
 
 type OnboardingState = {
   fullName: string;
@@ -69,6 +70,9 @@ export function VeteranOnboardingPage() {
   const [state, setState] = useState<OnboardingState>(initialState);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mosQuery, setMosQuery] = useState("");
+  const [mosSearching, setMosSearching] = useState(false);
+  const [mosResults, setMosResults] = useState<MilitaryOccupationSearchResult[]>([]);
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -100,6 +104,32 @@ export function VeteranOnboardingPage() {
         : [...prev.preferredWorkModes, mode];
       return { ...prev, preferredWorkModes: next.length > 0 ? next : ["hybrid"] };
     });
+  }
+
+  async function handleMosSearch(query: string) {
+    setMosQuery(query);
+    if (query.trim().length < 2) {
+      setMosResults([]);
+      return;
+    }
+    setMosSearching(true);
+    const result = await searchMilitaryOccupations(query, state.militaryBranch);
+    setMosSearching(false);
+    if (!result.ok || !result.data) {
+      setMosResults([]);
+      return;
+    }
+    setMosResults(result.data.occupations);
+  }
+
+  function applyMosSelection(occupation: MilitaryOccupationSearchResult) {
+    setState((prev) => ({
+      ...prev,
+      mosCode: occupation.mosCode,
+      mosTitle: occupation.mosTitle
+    }));
+    setMosQuery(`${occupation.mosCode} - ${occupation.mosTitle}`);
+    setMosResults([]);
   }
 
   function validateStep(currentStep: number) {
@@ -231,6 +261,40 @@ export function VeteranOnboardingPage() {
               <option value="national_guard">National Guard</option>
               <option value="other">Other</option>
             </select>
+            <div className="rounded border border-slate-200 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                MOS Lookup (Recommended)
+              </p>
+              <input
+                className="mt-2 w-full rounded border p-2"
+                placeholder="Search MOS code or title"
+                value={mosQuery}
+                onChange={(e) => void handleMosSearch(e.target.value)}
+              />
+              {mosSearching ? <p className="mt-2 text-xs text-slate-500">Searching occupations...</p> : null}
+              {mosResults.length > 0 ? (
+                <div className="mt-2 max-h-44 overflow-auto rounded border border-slate-200 bg-white">
+                  {mosResults.map((occupation) => (
+                    <button
+                      key={occupation.id}
+                      type="button"
+                      onClick={() => applyMosSelection(occupation)}
+                      className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm hover:bg-slate-50"
+                    >
+                      <p className="font-medium">
+                        {occupation.mosCode} - {occupation.mosTitle}
+                      </p>
+                      <p className="text-xs text-slate-600">
+                        {occupation.civilianEquivalentTitle ?? "Civilian equivalent pending"}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <p className="mt-2 text-xs text-slate-500">
+                You can still manually edit MOS code/title below.
+              </p>
+            </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <input className="rounded border p-2" placeholder="MOS Code" value={state.mosCode} onChange={(e) => setState({ ...state, mosCode: e.target.value })} />
               <input className="rounded border p-2" placeholder="MOS Title" value={state.mosTitle} onChange={(e) => setState({ ...state, mosTitle: e.target.value })} />
@@ -325,4 +389,3 @@ export function VeteranOnboardingPage() {
     </section>
   );
 }
-

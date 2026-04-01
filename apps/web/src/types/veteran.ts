@@ -43,3 +43,29 @@ export type VeteranPersona = {
   updatedAt?: string;
 };
 
+export type VeteranResume = {
+  id: string;
+  originalFilename: string;
+  parseStatus: "uploaded" | "parsed" | "failed";
+  parseConfidence: string | null;
+  parserVersion: string | null;
+  parseError: string | null;
+  parsedData: {
+    summary?: string;
+    experience?: string[];
+    education?: string[];
+    certifications?: string[];
+    skills?: string[];
+  } | null;
+  uploadedAt: string;
+  parsedAt: string | null;
+};
+
+export type MilitaryOccupationSearchResult = {
+  id: string;
+  militaryBranch: string;
+  mosCode: string;
+  mosTitle: string;
+  civilianEquivalentTitle: string | null;
+  description: string | null;
+};

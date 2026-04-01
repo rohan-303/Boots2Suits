@@ -6,7 +6,12 @@ import type {
   JobPersona
 } from "../types/employer";
 import type { EmployerMatchResult, VeteranRecommendation } from "../types/matching";
-import type { VeteranPersona, VeteranProfile } from "../types/veteran";
+import type {
+  MilitaryOccupationSearchResult,
+  VeteranPersona,
+  VeteranProfile,
+  VeteranResume
+} from "../types/veteran";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
 
@@ -31,6 +36,35 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResult<T
       ok?: boolean;
       error?: string;
       user?: AuthUser;
+    };
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: body.error ?? `Request failed with status ${response.status}`
+      };
+    }
+
+    return { ok: true, data: body as T };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Network error"
+    };
+  }
+}
+
+async function requestForm<T>(path: string, formData: FormData, method = "POST"): Promise<ApiResult<T>> {
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method,
+      credentials: "include",
+      body: formData
+    });
+
+    const body = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      error?: string;
     };
 
     if (!response.ok) {
@@ -82,6 +116,7 @@ export async function getVeteranProfile() {
     profile: VeteranProfile | null;
     complete: boolean;
     persona: VeteranPersona | null;
+    resume: VeteranResume | null;
   }>("/veteran/profile", { method: "GET" });
 }
 
@@ -97,6 +132,36 @@ export async function generateVeteranPersona() {
     ok: true;
     persona: VeteranPersona;
   }>("/veteran/persona/generate", { method: "POST" });
+}
+
+export async function uploadVeteranResume(file: File) {
+  const formData = new FormData();
+  formData.append("resume", file);
+  return requestForm<{
+    ok: true;
+    resume: {
+      id: string;
+      parseStatus: "uploaded" | "parsed" | "failed";
+      confidence: number;
+      sectionsFound: {
+        summary: boolean;
+        experience: number;
+        education: number;
+        certifications: number;
+        skills: number;
+      };
+    };
+  }>("/veteran/resume/upload", formData, "POST");
+}
+
+export async function searchMilitaryOccupations(query: string, branch?: string) {
+  const params = new URLSearchParams();
+  params.set("q", query);
+  if (branch) params.set("branch", branch);
+  return request<{
+    ok: true;
+    occupations: MilitaryOccupationSearchResult[];
+  }>(`/military/occupations/search?${params.toString()}`, { method: "GET" });
 }
 
 export async function getEmployerProfile() {

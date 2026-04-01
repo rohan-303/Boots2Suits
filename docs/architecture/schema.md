@@ -36,6 +36,10 @@ This schema supports the MVP-critical data model for:
     and completion timestamp
 - `veteran_occupation_history`
   - normalized profile-level MOS history (minimal practical MVP form)
+- `veteran_documents`
+  - uploaded veteran document metadata (MVP: resume PDF)
+  - parse lifecycle fields (`parse_status`, `parse_confidence`, `parse_error`)
+  - stores deterministic parsed section output in `parsed_data`
 - `veteran_personas`
   - profile personas by scope (`overall`, `leadership`, `technical`, `culture`)
   - overall persona supports structured outputs: strengths, role clusters,
@@ -131,6 +135,7 @@ The schema enforces low-risk/high-value checks:
 - `packages/db/drizzle/0002_auth_foundation.sql`
 - `packages/db/drizzle/0003_veteran_onboarding_persona_foundation.sql`
 - `packages/db/drizzle/0004_employer_onboarding_job_persona_foundation.sql`
+- `packages/db/drizzle/0005_resume_ingestion_foundation.sql`
 - `packages/db/drizzle/meta/_journal.json`
 
 ## Commands

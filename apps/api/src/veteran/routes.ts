@@ -1,14 +1,21 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { Router } from "express";
 import {
   createDbClient,
   users,
+  veteranDocuments,
   veteranPersonas,
   veteranProfiles
 } from "@boots2suits/db";
+import multer from "multer";
+import path from "node:path";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { buildAuthMiddleware, type AuthenticatedRequest } from "../auth/middleware.js";
+import { buildSafeProfileEnrichment } from "./enrichment.js";
 import { generateOverallVeteranPersona } from "./persona.js";
+import { extractPdfText, parseResumeText } from "./resumeParser.js";
 
 type Db = ReturnType<typeof createDbClient>["db"];
 
@@ -59,6 +66,33 @@ const profileSchema = z.object({
   salaryExpectationMax: z.number().int().min(30000).nullable().optional(),
   preferredWorkModes: z.array(z.enum(["remote", "hybrid", "onsite"])).min(1).max(3),
   complete: z.boolean().default(false)
+});
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const RESUME_STORAGE_DIR = path.resolve(__dirname, "../../storage/resumes");
+fs.mkdirSync(RESUME_STORAGE_DIR, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, RESUME_STORAGE_DIR),
+    filename: (_req, file, cb) => {
+      const safeName = file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      cb(null, `${Date.now()}-${safeName}`);
+    }
+  }),
+  fileFilter: (_req, file, cb) => {
+    const isPdf =
+      file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf");
+    if (!isPdf) {
+      cb(new Error("Only PDF resume uploads are supported."));
+      return;
+    }
+    cb(null, true);
+  },
+  limits: {
+    fileSize: 8 * 1024 * 1024
+  }
 });
 
 function isProfileComplete(profile: {
@@ -146,7 +180,8 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
         ok: true,
         profile: null,
         complete: false,
-        persona: null
+        persona: null,
+        resume: null
       });
     }
 
@@ -171,11 +206,35 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
       )
       .limit(1);
 
+    const [resumeDocument] = await options.db
+      .select({
+        id: veteranDocuments.id,
+        originalFilename: veteranDocuments.originalFilename,
+        parseStatus: veteranDocuments.parseStatus,
+        parseConfidence: veteranDocuments.parseConfidence,
+        parserVersion: veteranDocuments.parserVersion,
+        parseError: veteranDocuments.parseError,
+        parsedData: veteranDocuments.parsedData,
+        uploadedAt: veteranDocuments.uploadedAt,
+        parsedAt: veteranDocuments.parsedAt
+      })
+      .from(veteranDocuments)
+      .where(
+        and(
+          eq(veteranDocuments.veteranProfileId, profile.id),
+          eq(veteranDocuments.documentType, "resume"),
+          eq(veteranDocuments.isActive, true)
+        )
+      )
+      .orderBy(desc(veteranDocuments.uploadedAt))
+      .limit(1);
+
     return res.json({
       ok: true,
       profile,
       complete: isProfileComplete(profile),
-      persona: persona ?? null
+      persona: persona ?? null,
+      resume: resumeDocument ?? null
     });
   });
 
@@ -249,6 +308,160 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
     return res.json({ ok: true });
   });
 
+  router.post(
+    "/resume/upload",
+    (req, res, next) => {
+      upload.single("resume")(req, res, (error) => {
+        if (error) {
+          return res.status(400).json({
+            ok: false,
+            error: error instanceof Error ? error.message : "Resume upload failed."
+          });
+        }
+        return next();
+      });
+    },
+    async (req: AuthenticatedRequest, res) => {
+      const authUser = req.authUser;
+      if (!authUser) {
+        return res.status(401).json({ ok: false, error: "Authentication required." });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ ok: false, error: "Resume file is required." });
+      }
+
+      const [profile] = await options.db
+        .select({
+          id: veteranProfiles.id,
+          responsibilitiesSummary: veteranProfiles.responsibilitiesSummary,
+          leadershipExperience: veteranProfiles.leadershipExperience,
+          keySkills: veteranProfiles.keySkills,
+          toolsTechnologies: veteranProfiles.toolsTechnologies,
+          desiredRoles: veteranProfiles.desiredRoles,
+          civilianSummary: veteranProfiles.civilianSummary,
+          translationConfidence: veteranProfiles.translationConfidence
+        })
+        .from(veteranProfiles)
+        .where(eq(veteranProfiles.userId, authUser.id))
+        .limit(1);
+
+      if (!profile) {
+        return res.status(400).json({
+          ok: false,
+          error: "Complete veteran onboarding profile before uploading a resume."
+        });
+      }
+
+      const now = new Date();
+      const [activeResume] = await options.db
+        .select({
+          id: veteranDocuments.id
+        })
+        .from(veteranDocuments)
+        .where(
+          and(
+            eq(veteranDocuments.veteranProfileId, profile.id),
+            eq(veteranDocuments.documentType, "resume"),
+            eq(veteranDocuments.isActive, true)
+          )
+        )
+        .orderBy(desc(veteranDocuments.uploadedAt))
+        .limit(1);
+
+      const [createdDoc] = await options.db
+        .insert(veteranDocuments)
+        .values({
+          veteranProfileId: profile.id,
+          documentType: "resume",
+          isActive: true,
+          originalFilename: req.file.originalname,
+          mimeType: req.file.mimetype || "application/pdf",
+          sizeBytes: req.file.size,
+          storagePath: req.file.path,
+          parseStatus: "uploaded",
+          parserVersion: "pdf-parse-v1",
+          uploadedByUserId: authUser.id,
+          uploadedAt: now
+        })
+        .returning({ id: veteranDocuments.id });
+
+      if (activeResume) {
+        await options.db
+          .update(veteranDocuments)
+          .set({
+            isActive: false,
+            replacedByDocumentId: createdDoc.id
+          })
+          .where(eq(veteranDocuments.id, activeResume.id));
+      }
+
+      try {
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const rawText = await extractPdfText(fileBuffer);
+        const parsed = parseResumeText(rawText);
+        const enrichment = buildSafeProfileEnrichment(profile, parsed);
+
+        await options.db
+          .update(veteranProfiles)
+          .set({
+            resumeText: rawText || null,
+            ...enrichment,
+            updatedAt: now
+          })
+          .where(eq(veteranProfiles.id, profile.id));
+
+        await options.db
+          .update(veteranDocuments)
+          .set({
+            parseStatus: "parsed",
+            parseConfidence: parsed.confidence.toFixed(3),
+            parserVersion: "pdf-parse-v1",
+            parsedData: {
+              summary: parsed.summary,
+              experience: parsed.experience,
+              education: parsed.education,
+              certifications: parsed.certifications,
+              skills: parsed.skills
+            },
+            parseError: null,
+            parsedAt: now
+          })
+          .where(eq(veteranDocuments.id, createdDoc.id));
+
+        return res.status(201).json({
+          ok: true,
+          resume: {
+            id: createdDoc.id,
+            parseStatus: "parsed",
+            confidence: parsed.confidence,
+            sectionsFound: {
+              summary: Boolean(parsed.summary),
+              experience: parsed.experience.length,
+              education: parsed.education.length,
+              certifications: parsed.certifications.length,
+              skills: parsed.skills.length
+            }
+          }
+        });
+      } catch (error) {
+        await options.db
+          .update(veteranDocuments)
+          .set({
+            parseStatus: "failed",
+            parseError: error instanceof Error ? error.message : "Resume parsing failed.",
+            parsedAt: now
+          })
+          .where(eq(veteranDocuments.id, createdDoc.id));
+
+        return res.status(500).json({
+          ok: false,
+          error: "Resume uploaded but parsing failed. Please try another PDF."
+        });
+      }
+    }
+  );
+
   router.post("/persona/generate", async (req: AuthenticatedRequest, res) => {
     const authUser = req.authUser;
     if (!authUser) {
@@ -280,6 +493,40 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
       return res.status(404).json({ ok: false, error: "Profile not found." });
     }
 
+    const [resumeDocument] = await options.db
+      .select({
+        parsedData: veteranDocuments.parsedData
+      })
+      .from(veteranDocuments)
+      .where(
+        and(
+          eq(veteranDocuments.veteranProfileId, profile.id),
+          eq(veteranDocuments.documentType, "resume"),
+          eq(veteranDocuments.isActive, true),
+          eq(veteranDocuments.parseStatus, "parsed")
+        )
+      )
+      .orderBy(desc(veteranDocuments.uploadedAt))
+      .limit(1);
+
+    const parsedData =
+      resumeDocument?.parsedData && typeof resumeDocument.parsedData === "object"
+        ? (resumeDocument.parsedData as {
+            summary?: string;
+            skills?: string[];
+            experience?: string[];
+          })
+        : null;
+    const inferredRoles: string[] = [];
+    if (parsedData?.experience && Array.isArray(parsedData.experience)) {
+      const expText = parsedData.experience.join(" ").toLowerCase();
+      if (expText.includes("operations")) inferredRoles.push("operations specialist");
+      if (expText.includes("program")) inferredRoles.push("program coordinator");
+      if (expText.includes("logistics")) inferredRoles.push("logistics coordinator");
+      if (expText.includes("support")) inferredRoles.push("support specialist");
+      if (expText.includes("security")) inferredRoles.push("security operations specialist");
+    }
+
     const persona = generateOverallVeteranPersona({
       fullName: authUser.fullName,
       militaryBranch: profile.militaryBranch,
@@ -299,7 +546,14 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
       desiredRoles: Array.isArray(profile.desiredRoles) ? profile.desiredRoles.map(String) : [],
       preferredIndustries: Array.isArray(profile.preferredIndustries)
         ? profile.preferredIndustries.map(String)
-        : []
+        : [],
+      parsedResumeSignals: parsedData
+        ? {
+            summary: parsedData.summary ?? null,
+            skills: Array.isArray(parsedData.skills) ? parsedData.skills.map(String) : [],
+            inferredRoles
+          }
+        : undefined
     });
 
     const now = new Date();
@@ -355,4 +609,3 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
 
   return router;
 }
-

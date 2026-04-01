@@ -1,14 +1,20 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { generateVeteranPersona, getVeteranProfile } from "../lib/api";
-import type { VeteranPersona, VeteranProfile } from "../types/veteran";
+import {
+  generateVeteranPersona,
+  getVeteranProfile,
+  uploadVeteranResume
+} from "../lib/api";
+import type { VeteranPersona, VeteranProfile, VeteranResume } from "../types/veteran";
 
 export function VeteranProfilePage() {
   const [profile, setProfile] = useState<VeteranProfile | null>(null);
   const [persona, setPersona] = useState<VeteranPersona | null>(null);
+  const [resume, setResume] = useState<VeteranResume | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -21,6 +27,7 @@ export function VeteranProfilePage() {
     }
     setProfile(result.data.profile);
     setPersona(result.data.persona);
+    setResume(result.data.resume);
     setLoading(false);
   }
 
@@ -38,6 +45,18 @@ export function VeteranProfilePage() {
       return;
     }
     setPersona(result.data.persona);
+  }
+
+  async function onUploadResume(file: File) {
+    setUploading(true);
+    setError(null);
+    const result = await uploadVeteranResume(file);
+    setUploading(false);
+    if (!result.ok) {
+      setError(result.error ?? "Unable to upload resume.");
+      return;
+    }
+    await load();
   }
 
   if (loading) {
@@ -85,6 +104,60 @@ export function VeteranProfilePage() {
           <p className="text-sm font-semibold">Desired Roles</p>
           <p className="text-sm text-slate-700">{(profile.desiredRoles ?? []).join(", ") || "-"}</p>
         </div>
+        <div className="mt-5 rounded border border-slate-200 bg-slate-50 p-4">
+          <p className="text-sm font-semibold">Resume Upload & Parsing</p>
+          <p className="mt-1 text-xs text-slate-600">
+            Upload a PDF to enrich your skills/profile signals without overwriting your manual entries.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <label className="rounded border border-slate-400 bg-white px-3 py-2 text-sm font-medium cursor-pointer">
+              {uploading ? "Uploading..." : "Upload / Replace Resume (PDF)"}
+              <input
+                type="file"
+                accept="application/pdf"
+                className="hidden"
+                disabled={uploading}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) {
+                    void onUploadResume(file);
+                  }
+                  event.currentTarget.value = "";
+                }}
+              />
+            </label>
+            {resume ? (
+              <p className="text-xs text-slate-600">
+                {resume.originalFilename} - status: {resume.parseStatus}
+                {resume.parseConfidence ? ` - confidence: ${resume.parseConfidence}` : ""}
+              </p>
+            ) : (
+              <p className="text-xs text-slate-500">No resume uploaded yet.</p>
+            )}
+          </div>
+          {resume?.parsedData ? (
+            <div className="mt-3 text-xs text-slate-700">
+              <p>
+                Sections parsed:{" "}
+                {[
+                  resume.parsedData.summary ? "summary" : "",
+                  (resume.parsedData.experience?.length ?? 0) > 0 ? "experience" : "",
+                  (resume.parsedData.education?.length ?? 0) > 0 ? "education" : "",
+                  (resume.parsedData.certifications?.length ?? 0) > 0 ? "certifications" : "",
+                  (resume.parsedData.skills?.length ?? 0) > 0 ? "skills" : ""
+                ]
+                  .filter(Boolean)
+                  .join(", ") || "none"}
+              </p>
+              <p className="mt-1">
+                Parsed skills preview: {(resume.parsedData.skills ?? []).slice(0, 8).join(", ") || "-"}
+              </p>
+            </div>
+          ) : null}
+          {resume?.parseError ? (
+            <p className="mt-2 text-xs font-medium text-rose-700">{resume.parseError}</p>
+          ) : null}
+        </div>
         {error ? <p className="mt-4 text-sm font-medium text-rose-700">{error}</p> : null}
       </div>
 
@@ -104,4 +177,3 @@ export function VeteranProfilePage() {
     </section>
   );
 }
-

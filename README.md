@@ -125,6 +125,7 @@ Role-protection skeleton test routes:
 - `GET /veteran/profile`
 - `POST /veteran/profile`
 - `POST /veteran/persona/generate`
+- `POST /veteran/resume/upload` (PDF upload + parse + safe enrichment)
 
 ## Employer onboarding + jobs routes (foundation)
 
@@ -140,6 +141,10 @@ Role-protection skeleton test routes:
 - `POST /matching/jobs/:jobId/run`
 - `GET /matching/jobs/:jobId/results`
 - `GET /matching/veterans/:veteranProfileId/jobs`
+
+## Military lookup routes
+
+- `GET /military/occupations/search?q=...&branch=...`
 
 ## Notes
 
