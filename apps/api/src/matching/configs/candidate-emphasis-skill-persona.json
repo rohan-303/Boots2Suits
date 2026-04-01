@@ -1,0 +1,17 @@
+{
+  "version": "score-v1-candidate-skillpersona",
+  "algorithmFamily": "hybrid-rule",
+  "explanationVersion": "explain-v1",
+  "embeddingModelVersion": "structured-placeholder-v1",
+  "rerankerVersion": "none",
+  "calibrationVersion": "manual-candidate-001",
+  "weights": {
+    "skillSimilarity": 0.4,
+    "personaFit": 0.25,
+    "leadershipFit": 0.08,
+    "experienceFit": 0.08,
+    "locationFit": 0.08,
+    "clearanceFit": 0.08,
+    "compensationFit": 0.03
+  }
+}

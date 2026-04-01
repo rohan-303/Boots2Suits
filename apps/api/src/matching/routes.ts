@@ -20,6 +20,7 @@ import {
 } from "@boots2suits/db";
 import { buildAuthMiddleware, type AuthenticatedRequest } from "../auth/middleware.js";
 import { buildMatchRunFingerprint, scoreCandidateJobMatch } from "./engine.js";
+import { defaultScoringConfig } from "./scoringConfig.js";
 
 type Db = ReturnType<typeof createDbClient>["db"];
 
@@ -202,12 +203,12 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
     const [run] = await options.db
       .insert(matchRuns)
       .values({
-        algorithmVersion: "hybrid-rule-v1",
-        embeddingModelVersion: "structured-placeholder-v1",
-        rerankerVersion: "none",
-        calibrationVersion: "none",
-        scoreVersion: "score-v1",
-        explanationVersion: "explain-v1",
+        algorithmVersion: defaultScoringConfig.algorithmFamily,
+        embeddingModelVersion: defaultScoringConfig.embeddingModelVersion,
+        rerankerVersion: defaultScoringConfig.rerankerVersion,
+        calibrationVersion: defaultScoringConfig.calibrationVersion,
+        scoreVersion: defaultScoringConfig.version,
+        explanationVersion: defaultScoringConfig.explanationVersion,
         inputFingerprint,
         sourceSnapshotHash: runSnapshotHash
       })
@@ -218,12 +219,12 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
       veteranProfileId: item.veteranProfileId,
       jobId,
       matchRunId: run.id,
-      algorithmVersion: "hybrid-rule-v1",
-      embeddingModelVersion: "structured-placeholder-v1",
-      rerankerVersion: "none",
-      calibrationVersion: "none",
-      scoreVersion: "score-v1",
-      explanationVersion: "explain-v1",
+      algorithmVersion: defaultScoringConfig.algorithmFamily,
+      embeddingModelVersion: defaultScoringConfig.embeddingModelVersion,
+      rerankerVersion: defaultScoringConfig.rerankerVersion,
+      calibrationVersion: defaultScoringConfig.calibrationVersion,
+      scoreVersion: defaultScoringConfig.version,
+      explanationVersion: defaultScoringConfig.explanationVersion,
       inputFingerprint,
       sourceSnapshotHash: item.match.sourceSnapshotHash,
       score: item.match.score.toFixed(6),

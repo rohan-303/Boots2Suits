@@ -1,0 +1,215 @@
+{
+  "version": "eval-v1",
+  "description": "Starter internal evaluation set for Boots2Suits hybrid matching.",
+  "cases": [
+    {
+      "id": "operations-leadership-fit-001",
+      "title": "Operations manager role should rank veteran operations leader first",
+      "job": {
+        "id": "job-eval-001",
+        "title": "Operations Program Manager",
+        "department": "Operations",
+        "locationType": "hybrid",
+        "locationState": "TX",
+        "compensationMin": 90000,
+        "compensationMax": 120000,
+        "mustHaveSkills": ["operations planning", "team leadership", "program management"],
+        "niceToHaveSkills": ["power bi", "logistics"],
+        "requiredExperienceLevel": "senior",
+        "clearanceRequirement": "secret"
+      },
+      "jobPersona": {
+        "suggestedRoleFamily": "operations",
+        "leadershipLevel": "medium",
+        "suggestedCandidateArchetypes": ["operations veteran leader", "program execution specialist"]
+      },
+      "candidates": [
+        {
+          "id": "cand-a",
+          "label": "Veteran operations leader",
+          "veteran": {
+            "id": "vp-a",
+            "userId": "u-a",
+            "locationState": "TX",
+            "preferredWorkModes": ["hybrid", "onsite"],
+            "yearsOfService": 11,
+            "clearanceLevel": "secret",
+            "salaryExpectationMin": 95000,
+            "salaryExpectationMax": 120000,
+            "keySkills": ["operations planning", "team leadership", "program management", "logistics"],
+            "desiredRoles": ["operations manager", "program manager"],
+            "highestRank": "Captain",
+            "leadershipExperience": "Led 30-person operations team."
+          },
+          "veteranPersona": {
+            "roleClusters": ["operations-leadership", "team-development"],
+            "suggestedJobTitles": ["operations manager", "program operations lead"],
+            "leadershipProfile": "Experienced leader of cross-functional teams.",
+            "experienceLevel": "senior"
+          }
+        },
+        {
+          "id": "cand-b",
+          "label": "Technical support veteran",
+          "veteran": {
+            "id": "vp-b",
+            "userId": "u-b",
+            "locationState": "CA",
+            "preferredWorkModes": ["remote"],
+            "yearsOfService": 5,
+            "clearanceLevel": "confidential",
+            "salaryExpectationMin": 85000,
+            "salaryExpectationMax": 100000,
+            "keySkills": ["help desk", "network troubleshooting", "it support"],
+            "desiredRoles": ["support engineer"],
+            "highestRank": "Sergeant",
+            "leadershipExperience": "Supported small technical team."
+          },
+          "veteranPersona": {
+            "roleClusters": ["technical-support"],
+            "suggestedJobTitles": ["it support engineer"],
+            "leadershipProfile": "Hands-on technical contributor.",
+            "experienceLevel": "mid"
+          }
+        },
+        {
+          "id": "cand-c",
+          "label": "Logistics coordinator",
+          "veteran": {
+            "id": "vp-c",
+            "userId": "u-c",
+            "locationState": "TX",
+            "preferredWorkModes": ["onsite"],
+            "yearsOfService": 7,
+            "clearanceLevel": "none",
+            "salaryExpectationMin": 70000,
+            "salaryExpectationMax": 90000,
+            "keySkills": ["logistics", "inventory control", "supply chain"],
+            "desiredRoles": ["logistics coordinator"],
+            "highestRank": "Staff Sergeant",
+            "leadershipExperience": "Managed warehouse shift operations."
+          },
+          "veteranPersona": {
+            "roleClusters": ["logistics-coordination"],
+            "suggestedJobTitles": ["logistics operations lead"],
+            "leadershipProfile": "Strong tactical execution leader.",
+            "experienceLevel": "mid"
+          }
+        }
+      ],
+      "expectations": {
+        "expectedTopCandidateId": "cand-a",
+        "expectedTop3CandidateIds": ["cand-a", "cand-c"],
+        "expectedOrder": ["cand-a", "cand-c", "cand-b"],
+        "expectedReasonCodesByCandidate": {
+          "cand-a": ["skillSimilarity_strong", "clearanceFit_strong"],
+          "cand-c": ["personaFit_partial"]
+        }
+      }
+    },
+    {
+      "id": "remote-tech-support-002",
+      "title": "Remote technical support role should favor technical support profile",
+      "job": {
+        "id": "job-eval-002",
+        "title": "Technical Support Specialist",
+        "department": "IT Support",
+        "locationType": "remote",
+        "locationState": null,
+        "compensationMin": 65000,
+        "compensationMax": 90000,
+        "mustHaveSkills": ["it support", "network troubleshooting", "ticketing systems"],
+        "niceToHaveSkills": ["python", "security+"],
+        "requiredExperienceLevel": "mid",
+        "clearanceRequirement": "none"
+      },
+      "jobPersona": {
+        "suggestedRoleFamily": "technical-support",
+        "leadershipLevel": "individual_contributor",
+        "suggestedCandidateArchetypes": ["mission-driven support engineer"]
+      },
+      "candidates": [
+        {
+          "id": "cand-d",
+          "label": "Remote-ready support specialist",
+          "veteran": {
+            "id": "vp-d",
+            "userId": "u-d",
+            "locationState": "FL",
+            "preferredWorkModes": ["remote", "hybrid"],
+            "yearsOfService": 6,
+            "clearanceLevel": "none",
+            "salaryExpectationMin": 70000,
+            "salaryExpectationMax": 85000,
+            "keySkills": ["it support", "network troubleshooting", "servicenow", "ticketing systems"],
+            "desiredRoles": ["technical support specialist", "support engineer"],
+            "highestRank": "Sergeant",
+            "leadershipExperience": "Mentored junior support technicians."
+          },
+          "veteranPersona": {
+            "roleClusters": ["technical-support"],
+            "suggestedJobTitles": ["it support engineer", "technical operations specialist"],
+            "leadershipProfile": "Reliable individual contributor with mentoring experience.",
+            "experienceLevel": "mid"
+          }
+        },
+        {
+          "id": "cand-e",
+          "label": "Operations-heavy profile",
+          "veteran": {
+            "id": "vp-e",
+            "userId": "u-e",
+            "locationState": "NY",
+            "preferredWorkModes": ["onsite"],
+            "yearsOfService": 10,
+            "clearanceLevel": "secret",
+            "salaryExpectationMin": 95000,
+            "salaryExpectationMax": 120000,
+            "keySkills": ["operations planning", "program execution", "leadership"],
+            "desiredRoles": ["operations manager"],
+            "highestRank": "Major",
+            "leadershipExperience": "Led battalion operations planning."
+          },
+          "veteranPersona": {
+            "roleClusters": ["operations-leadership"],
+            "suggestedJobTitles": ["operations manager"],
+            "leadershipProfile": "High-level operations leader.",
+            "experienceLevel": "senior"
+          }
+        },
+        {
+          "id": "cand-f",
+          "label": "Logistics background with partial support exposure",
+          "veteran": {
+            "id": "vp-f",
+            "userId": "u-f",
+            "locationState": "GA",
+            "preferredWorkModes": ["hybrid"],
+            "yearsOfService": 4,
+            "clearanceLevel": "none",
+            "salaryExpectationMin": 60000,
+            "salaryExpectationMax": 78000,
+            "keySkills": ["logistics", "excel", "help desk support"],
+            "desiredRoles": ["support specialist", "logistics coordinator"],
+            "highestRank": "Corporal",
+            "leadershipExperience": "Shift lead for logistics support."
+          },
+          "veteranPersona": {
+            "roleClusters": ["logistics-coordination", "technical-support"],
+            "suggestedJobTitles": ["support specialist", "logistics coordinator"],
+            "leadershipProfile": "Emerging team lead.",
+            "experienceLevel": "mid"
+          }
+        }
+      ],
+      "expectations": {
+        "expectedTopCandidateId": "cand-d",
+        "expectedTop3CandidateIds": ["cand-d", "cand-f"],
+        "expectedOrder": ["cand-d", "cand-f", "cand-e"],
+        "expectedReasonCodesByCandidate": {
+          "cand-d": ["skillSimilarity_strong", "locationFit_strong"]
+        }
+      }
+    }
+  ]
+}

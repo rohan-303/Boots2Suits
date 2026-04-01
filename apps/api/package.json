@@ -12,7 +12,10 @@
     "prelint": "npm run build --workspace @boots2suits/db",
     "lint": "tsc -p tsconfig.json --noEmit",
     "pretypecheck": "npm run build --workspace @boots2suits/db",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "match:evaluate": "tsx src/matching/eval/runEvaluation.ts",
+    "match:calibrate": "tsx src/matching/eval/runCalibration.ts",
+    "match:inspect": "tsx src/matching/inspect.ts"
   },
   "dependencies": {
     "@boots2suits/db": "0.1.0",

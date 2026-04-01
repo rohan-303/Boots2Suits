@@ -1,14 +1,9 @@
 import { createHash } from "node:crypto";
-
-const SCORE_WEIGHTS = {
-  skillSimilarity: 0.35,
-  personaFit: 0.2,
-  leadershipFit: 0.1,
-  experienceFit: 0.1,
-  locationFit: 0.1,
-  clearanceFit: 0.1,
-  compensationFit: 0.05
-} as const;
+import {
+  defaultScoringConfig,
+  type MatchFeatureKey,
+  type MatchingScoringConfig
+} from "./scoringConfig.js";
 
 const CLEARANCE_ORDER = ["none", "confidential", "secret", "top_secret", "ts_sci", "other"];
 
@@ -31,7 +26,7 @@ const STOPWORDS = new Set([
   "teams"
 ]);
 
-type MatchInput = {
+export type MatchInput = {
   job: {
     id: string;
     title: string;
@@ -73,7 +68,7 @@ type MatchInput = {
 };
 
 type FeatureContribution = {
-  featureName: keyof typeof SCORE_WEIGHTS;
+  featureName: MatchFeatureKey;
   featureWeight: number;
   featureValue: number;
   featureImpact: number;
@@ -89,6 +84,7 @@ export type MatchScoreResult = {
   explanationBullets: string[];
   explanationData: {
     formulaVersion: string;
+    scoringConfigVersion: string;
     componentScores: Record<string, number>;
     weights: Record<string, number>;
     topContributors: Array<{
@@ -130,6 +126,11 @@ function overlapScore(left: Set<string>, right: Set<string>) {
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
+}
+
+function safeNormalize(value: number, denominator: number) {
+  if (denominator <= 0) return 0;
+  return value / denominator;
 }
 
 function parseClearanceLevel(value: string | null) {
@@ -184,7 +185,7 @@ function reasonCode(base: string, score: number) {
   return `${base}_gap`;
 }
 
-function detailForFeature(feature: keyof typeof SCORE_WEIGHTS, score: number) {
+function detailForFeature(feature: MatchFeatureKey, score: number) {
   if (feature === "skillSimilarity") {
     if (score >= 0.8) return "Strong must-have skill overlap with job requirements.";
     if (score >= 0.55) return "Partial overlap on required and preferred skills.";
@@ -227,7 +228,11 @@ function topExplanationBullets(features: FeatureContribution[]) {
   return top.map((feature) => feature.detail);
 }
 
-export function scoreCandidateJobMatch(input: MatchInput): MatchScoreResult {
+export function scoreCandidateJobMatch(
+  input: MatchInput,
+  scoringConfig: MatchingScoringConfig = defaultScoringConfig
+): MatchScoreResult {
+  const weights = scoringConfig.weights;
   const veteranSkills = toKeywords(input.veteran.keySkills);
   const mustSkills = toKeywords(input.job.mustHaveSkills);
   const niceSkills = toKeywords(input.job.niceToHaveSkills);
@@ -309,27 +314,36 @@ export function scoreCandidateJobMatch(input: MatchInput): MatchScoreResult {
 
   const score = clamp01(
     Object.entries(componentScores).reduce((total, [key, value]) => {
-      const weight = SCORE_WEIGHTS[key as keyof typeof SCORE_WEIGHTS];
+      const weight = weights[key as MatchFeatureKey];
       return total + value * weight;
     }, 0)
   );
 
   const semanticScore = clamp01(
-    (skillSimilarity * SCORE_WEIGHTS.skillSimilarity + personaFit * SCORE_WEIGHTS.personaFit) / 0.55
+    safeNormalize(
+      skillSimilarity * weights.skillSimilarity + personaFit * weights.personaFit,
+      weights.skillSimilarity + weights.personaFit
+    )
   );
   const ruleScore = clamp01(
-    (leadershipFit * SCORE_WEIGHTS.leadershipFit +
-      experienceFit * SCORE_WEIGHTS.experienceFit +
-      locationFit * SCORE_WEIGHTS.locationFit +
-      clearanceFit * SCORE_WEIGHTS.clearanceFit +
-      compensationFit * SCORE_WEIGHTS.compensationFit) /
-      0.45
+    safeNormalize(
+      leadershipFit * weights.leadershipFit +
+        experienceFit * weights.experienceFit +
+        locationFit * weights.locationFit +
+        clearanceFit * weights.clearanceFit +
+        compensationFit * weights.compensationFit,
+      weights.leadershipFit +
+        weights.experienceFit +
+        weights.locationFit +
+        weights.clearanceFit +
+        weights.compensationFit
+    )
   );
 
   const features: FeatureContribution[] = (Object.entries(componentScores) as Array<
-    [keyof typeof SCORE_WEIGHTS, number]
+    [MatchFeatureKey, number]
   >).map(([featureName, featureValue]) => {
-    const featureWeight = SCORE_WEIGHTS[featureName];
+    const featureWeight = weights[featureName];
     return {
       featureName,
       featureWeight,
@@ -377,11 +391,12 @@ export function scoreCandidateJobMatch(input: MatchInput): MatchScoreResult {
     explanation,
     explanationBullets,
     explanationData: {
-      formulaVersion: "hybrid-rule-v1",
+      formulaVersion: `${scoringConfig.algorithmFamily}-formula`,
+      scoringConfigVersion: scoringConfig.version,
       componentScores: Object.fromEntries(
         Object.entries(componentScores).map(([key, value]) => [key, Number(value.toFixed(6))])
       ),
-      weights: SCORE_WEIGHTS,
+      weights,
       topContributors
     },
     features,

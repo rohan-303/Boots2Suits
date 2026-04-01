@@ -142,6 +142,28 @@ Role-protection skeleton test routes:
 - `GET /matching/jobs/:jobId/results`
 - `GET /matching/veterans/:veteranProfileId/jobs`
 
+## Matching evaluation & calibration
+
+Run evaluation:
+
+```bash
+npm run match:evaluate --workspace @boots2suits/api
+```
+
+Run baseline vs candidate calibration:
+
+```bash
+npm run match:calibrate --workspace @boots2suits/api -- --candidate src/matching/configs/candidate-emphasis-skill-persona.json
+```
+
+Inspect persisted pair/ranking outputs:
+
+```bash
+npm run match:inspect --workspace @boots2suits/api -- pair --jobId <job-id> --veteranProfileId <veteran-profile-id>
+npm run match:inspect --workspace @boots2suits/api -- job --jobId <job-id>
+npm run match:inspect --workspace @boots2suits/api -- veteran --veteranProfileId <veteran-profile-id>
+```
+
 ## Military lookup routes
 
 - `GET /military/occupations/search?q=...&branch=...`
