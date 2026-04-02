@@ -135,6 +135,9 @@ export function EmployerJobMatchesPage() {
           </Link>
           <p className="text-slate-500">Run status: {runStatusLabel(matchRun)}</p>
           {matchRun ? <p className="text-slate-500">Latest run: {matchRun.id.slice(0, 8)}...</p> : null}
+          {matchRun ? (
+            <p className="text-slate-500">Embedding mode/model: {matchRun.embeddingModelVersion}</p>
+          ) : null}
         </div>
         {matchRun?.status === "failed" && matchRun.errorMessage ? (
           <p className="mt-2 text-sm font-medium text-rose-700">

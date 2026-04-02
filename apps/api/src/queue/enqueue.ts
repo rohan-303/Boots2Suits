@@ -1,6 +1,7 @@
 import { Queue } from "bullmq";
 import {
   QUEUE_NAMES,
+  type EmbeddingGenerationJobPayload,
   type MatchingRunJobPayload,
   type ResumeParsingJobPayload
 } from "@boots2suits/shared";
@@ -8,6 +9,7 @@ import { getRedisConnection } from "./connection.js";
 
 let resumeQueue: Queue<ResumeParsingJobPayload> | null = null;
 let matchingQueue: Queue<MatchingRunJobPayload> | null = null;
+let embeddingQueue: Queue<EmbeddingGenerationJobPayload> | null = null;
 
 function getResumeQueue(redisUrl: string) {
   if (!resumeQueue) {
@@ -25,6 +27,15 @@ function getMatchingQueue(redisUrl: string) {
     });
   }
   return matchingQueue;
+}
+
+function getEmbeddingQueue(redisUrl: string) {
+  if (!embeddingQueue) {
+    embeddingQueue = new Queue<EmbeddingGenerationJobPayload>(QUEUE_NAMES.embeddingGeneration, {
+      connection: getRedisConnection(redisUrl)
+    });
+  }
+  return embeddingQueue;
 }
 
 export async function enqueueResumeParsingJob(
@@ -48,5 +59,17 @@ export async function enqueueMatchingRunJob(
     jobId: `matchrun:${payload.matchRunId}`,
     removeOnComplete: 50,
     removeOnFail: 100
+  });
+}
+
+export async function enqueueEmbeddingGenerationJob(
+  redisUrl: string,
+  payload: EmbeddingGenerationJobPayload
+) {
+  const queue = getEmbeddingQueue(redisUrl);
+  return queue.add("generate-embedding", payload, {
+    jobId: `embedding:${payload.targetType}:${payload.targetId}:${payload.sourceSnapshotHash}`,
+    removeOnComplete: 100,
+    removeOnFail: 200
   });
 }

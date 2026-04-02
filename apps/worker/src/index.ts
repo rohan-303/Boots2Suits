@@ -3,12 +3,15 @@ import { Worker } from "bullmq";
 import { z } from "zod";
 import { createDbClient } from "@boots2suits/db";
 import {
+  type EmbeddingGenerationJobPayload,
   QUEUE_NAMES,
   type MatchingRunJobPayload,
   type ResumeParsingJobPayload
 } from "@boots2suits/shared";
 import { processMatchingRun } from "./matchingProcessor.js";
 import { processResumeParsingJob } from "./resumeProcessor.js";
+import { createEmbeddingsProviderFromEnv } from "./embeddings/provider.js";
+import { processEmbeddingGenerationJob } from "./embeddingProcessor.js";
 
 const envSchema = z.object({
   REDIS_URL: z.string().url().default("redis://localhost:6379"),
@@ -19,6 +22,7 @@ const envSchema = z.object({
 const env = envSchema.parse(process.env);
 const connection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
 const { db, pool } = createDbClient(env.DATABASE_URL);
+const embeddingsProvider = createEmbeddingsProviderFromEnv();
 
 const resumeWorker = new Worker<ResumeParsingJobPayload>(
   QUEUE_NAMES.resumeParsing,
@@ -49,6 +53,23 @@ const matchingWorker = new Worker<MatchingRunJobPayload>(
   }
 );
 
+const embeddingWorker = new Worker<EmbeddingGenerationJobPayload>(
+  QUEUE_NAMES.embeddingGeneration,
+  async (job) => {
+    console.log(
+      `[worker] embedding job start job=${job.id} target=${job.data.targetType}:${job.data.targetId}`
+    );
+    await processEmbeddingGenerationJob(db, embeddingsProvider, job.data);
+    console.log(
+      `[worker] embedding job completed job=${job.id} target=${job.data.targetType}:${job.data.targetId}`
+    );
+  },
+  {
+    connection,
+    concurrency: env.WORKER_CONCURRENCY
+  }
+);
+
 resumeWorker.on("failed", (job, error) => {
   console.error(`[worker] resume parse failed job=${job?.id ?? "unknown"}`, error);
 });
@@ -57,16 +78,24 @@ matchingWorker.on("failed", (job, error) => {
   console.error(`[worker] matching run failed job=${job?.id ?? "unknown"}`, error);
 });
 
+embeddingWorker.on("failed", (job, error) => {
+  console.error(`[worker] embedding generation failed job=${job?.id ?? "unknown"}`, error);
+});
+
 async function start() {
-  await Promise.all([resumeWorker.waitUntilReady(), matchingWorker.waitUntilReady()]);
+  await Promise.all([
+    resumeWorker.waitUntilReady(),
+    matchingWorker.waitUntilReady(),
+    embeddingWorker.waitUntilReady()
+  ]);
   console.log(
-    `[worker] ready. queues=${QUEUE_NAMES.resumeParsing},${QUEUE_NAMES.matchingRuns} concurrency=${env.WORKER_CONCURRENCY}`
+    `[worker] ready. queues=${QUEUE_NAMES.resumeParsing},${QUEUE_NAMES.matchingRuns},${QUEUE_NAMES.embeddingGeneration} concurrency=${env.WORKER_CONCURRENCY} embedding_mode=${embeddingsProvider.mode} embedding_model=${embeddingsProvider.modelVersion}`
   );
 }
 
 async function shutdown(signal: NodeJS.Signals) {
   console.log(`[worker] received ${signal}. shutting down...`);
-  await Promise.all([resumeWorker.close(), matchingWorker.close()]);
+  await Promise.all([resumeWorker.close(), matchingWorker.close(), embeddingWorker.close()]);
   await connection.quit();
   await pool.end();
   process.exit(0);

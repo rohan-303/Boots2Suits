@@ -27,6 +27,7 @@
         {
           "id": "cand-a",
           "label": "Veteran operations leader",
+          "embeddingSimilarity": 0.91,
           "veteran": {
             "id": "vp-a",
             "userId": "u-a",
@@ -51,6 +52,7 @@
         {
           "id": "cand-b",
           "label": "Technical support veteran",
+          "embeddingSimilarity": 0.42,
           "veteran": {
             "id": "vp-b",
             "userId": "u-b",
@@ -75,6 +77,7 @@
         {
           "id": "cand-c",
           "label": "Logistics coordinator",
+          "embeddingSimilarity": 0.67,
           "veteran": {
             "id": "vp-c",
             "userId": "u-c",
@@ -132,6 +135,7 @@
         {
           "id": "cand-d",
           "label": "Remote-ready support specialist",
+          "embeddingSimilarity": 0.9,
           "veteran": {
             "id": "vp-d",
             "userId": "u-d",
@@ -156,6 +160,7 @@
         {
           "id": "cand-e",
           "label": "Operations-heavy profile",
+          "embeddingSimilarity": 0.38,
           "veteran": {
             "id": "vp-e",
             "userId": "u-e",
@@ -180,6 +185,7 @@
         {
           "id": "cand-f",
           "label": "Logistics background with partial support exposure",
+          "embeddingSimilarity": 0.61,
           "veteran": {
             "id": "vp-f",
             "userId": "u-f",

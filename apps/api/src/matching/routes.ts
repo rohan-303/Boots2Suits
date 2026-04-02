@@ -42,6 +42,13 @@ function toNum(value: unknown) {
   return null;
 }
 
+function requestedEmbeddingModelVersion() {
+  if (env.EMBEDDINGS_PROVIDER === "openai" && env.EMBEDDINGS_API_KEY) {
+    return `openai:${env.EMBEDDINGS_MODEL}`;
+  }
+  return "structured-fallback-v1";
+}
+
 export function createMatchingRouter(options: MatchingRouterOptions) {
   const router = Router();
   const auth = buildAuthMiddleware({
@@ -86,7 +93,7 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
       .values({
         jobId,
         algorithmVersion: defaultScoringConfig.algorithmFamily,
-        embeddingModelVersion: defaultScoringConfig.embeddingModelVersion,
+        embeddingModelVersion: requestedEmbeddingModelVersion(),
         rerankerVersion: defaultScoringConfig.rerankerVersion,
         calibrationVersion: defaultScoringConfig.calibrationVersion,
         scoreVersion: defaultScoringConfig.version,
@@ -155,6 +162,7 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
         id: matchRuns.id,
         status: matchRuns.status,
         algorithmVersion: matchRuns.algorithmVersion,
+        embeddingModelVersion: matchRuns.embeddingModelVersion,
         scoreVersion: matchRuns.scoreVersion,
         explanationVersion: matchRuns.explanationVersion,
         createdAt: matchRuns.createdAt,
@@ -381,6 +389,7 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
           id: matchRuns.id,
           status: matchRuns.status,
           algorithmVersion: matchRuns.algorithmVersion,
+          embeddingModelVersion: matchRuns.embeddingModelVersion,
           scoreVersion: matchRuns.scoreVersion,
           explanationVersion: matchRuns.explanationVersion,
           createdAt: matchRuns.createdAt,

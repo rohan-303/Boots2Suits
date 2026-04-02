@@ -50,9 +50,16 @@ export type EvaluationReport = {
   generatedAt: string;
   datasetVersion: string;
   scoringConfigVersion: string;
+  embeddingMode: "structured_fallback" | "real_embeddings";
+  embeddingModelVersion: string;
   scoringConfig: MatchingScoringConfig;
   metrics: EvaluationMetrics;
   cases: EvaluationCaseResult[];
+};
+
+export type EvaluationRuntimeOptions = {
+  embeddingMode?: "structured_fallback" | "real_embeddings";
+  embeddingModelVersion?: string;
 };
 
 const __filename = fileURLToPath(import.meta.url);
@@ -88,8 +95,10 @@ export function loadDataset(datasetPath: string): EvaluationDataset {
 
 function rankCandidates(
   caseInput: EvaluationDataset["cases"][number],
-  scoringConfig: MatchingScoringConfig
+  scoringConfig: MatchingScoringConfig,
+  options: EvaluationRuntimeOptions
 ) {
+  const useEmbeddingSimulation = options.embeddingMode === "real_embeddings";
   const ranked = caseInput.candidates
     .map((candidate) => {
       const score = scoreCandidateJobMatch(
@@ -99,7 +108,11 @@ function rankCandidates(
           veteran: candidate.veteran as MatchInput["veteran"],
           veteranPersona: candidate.veteranPersona as MatchInput["veteranPersona"]
         },
-        scoringConfig
+        scoringConfig,
+        {
+          embeddingSimilarity: useEmbeddingSimulation ? candidate.embeddingSimilarity ?? null : null,
+          embeddingModelVersion: options.embeddingModelVersion ?? null
+        }
       );
 
       return {
@@ -125,10 +138,17 @@ function rankCandidates(
 
 export function runEvaluation(
   dataset: EvaluationDataset,
-  scoringConfig: MatchingScoringConfig
+  scoringConfig: MatchingScoringConfig,
+  options: EvaluationRuntimeOptions = {}
 ): EvaluationReport {
+  const runtimeEmbeddingMode = options.embeddingMode ?? "structured_fallback";
+  const runtimeEmbeddingModelVersion =
+    runtimeEmbeddingMode === "real_embeddings"
+      ? options.embeddingModelVersion ?? "eval-embedding-sim-v1"
+      : "structured-fallback-v1";
+
   const caseResults: EvaluationCaseResult[] = dataset.cases.map((entry) => {
-    const ranked = rankCandidates(entry, scoringConfig);
+    const ranked = rankCandidates(entry, scoringConfig, options);
     const expectedTop = entry.expectations.expectedTopCandidateId;
     const actualTop = ranked[0]?.candidateId ?? null;
     const expectedRank = ranked.find((item) => item.candidateId === expectedTop)?.rank ?? null;
@@ -207,6 +227,8 @@ export function runEvaluation(
     generatedAt: new Date().toISOString(),
     datasetVersion: dataset.version,
     scoringConfigVersion: scoringConfig.version,
+    embeddingMode: runtimeEmbeddingMode,
+    embeddingModelVersion: runtimeEmbeddingModelVersion,
     scoringConfig,
     metrics,
     cases: caseResults

@@ -11,7 +11,11 @@ const envSchema = z.object({
     .transform((value) => value === "true"),
   AUTH_SESSION_TTL_DAYS: z.coerce.number().int().positive().default(7),
   AUTH_TOKEN_PEPPER: z.string().min(16, "AUTH_TOKEN_PEPPER must be at least 16 chars"),
-  REDIS_URL: z.string().url().default("redis://localhost:6379")
+  REDIS_URL: z.string().url().default("redis://localhost:6379"),
+  EMBEDDINGS_PROVIDER: z.enum(["none", "openai"]).default("none"),
+  EMBEDDINGS_MODEL: z.string().min(1).default("text-embedding-3-small"),
+  EMBEDDINGS_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
+  EMBEDDINGS_API_KEY: z.string().optional()
 });
 
 export const env = envSchema.parse(process.env);

@@ -80,6 +80,10 @@ AUTH_COOKIE_NAME=boots2suits_session
 AUTH_COOKIE_SECURE=false
 AUTH_SESSION_TTL_DAYS=7
 AUTH_TOKEN_PEPPER=change-me-to-a-long-random-secret
+EMBEDDINGS_PROVIDER=none
+EMBEDDINGS_MODEL=text-embedding-3-small
+EMBEDDINGS_BASE_URL=https://api.openai.com/v1
+EMBEDDINGS_API_KEY=
 ```
 
 Worker:
@@ -94,6 +98,10 @@ Worker requires `apps/worker/.env` with:
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/boots2suits
 REDIS_URL=redis://localhost:6379
 WORKER_CONCURRENCY=2
+EMBEDDINGS_PROVIDER=none
+EMBEDDINGS_MODEL=text-embedding-3-small
+EMBEDDINGS_BASE_URL=https://api.openai.com/v1
+EMBEDDINGS_API_KEY=
 ```
 
 ## Quality checks
@@ -171,6 +179,12 @@ Run evaluation:
 npm run match:evaluate --workspace @boots2suits/api
 ```
 
+Embedding-mode simulation (for deterministic comparison in eval):
+
+```bash
+npm run match:evaluate --workspace @boots2suits/api -- --embedding-mode real_embeddings --embedding-model-version eval-embedding-sim-v1
+```
+
 Run baseline vs candidate calibration:
 
 ```bash
@@ -195,3 +209,5 @@ npm run match:inspect --workspace @boots2suits/api -- veteran --veteranProfileId
 - API startup validates `DATABASE_URL`, checks DB connectivity before listening,
   and exposes `/health` with live database status.
 - Worker processes async resume parsing and async matching runs via Redis/BullMQ.
+- Worker also processes async persona embedding generation.
+- If embeddings credentials are missing, matching and persona flows gracefully use deterministic semantic fallback.

@@ -5,7 +5,8 @@ const veteranInputSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   veteran: z.custom<MatchInput["veteran"]>(),
-  veteranPersona: z.custom<MatchInput["veteranPersona"]>().nullable()
+  veteranPersona: z.custom<MatchInput["veteranPersona"]>().nullable(),
+  embeddingSimilarity: z.number().min(0).max(1).optional()
 });
 
 export const evaluationCaseSchema = z.object({

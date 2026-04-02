@@ -43,6 +43,12 @@ Optional args:
 - `--dataset <path>`
 - `--config <path>`
 - `--out <report-path>`
+- `--embedding-mode structured_fallback|real_embeddings`
+- `--embedding-model-version <label>`
+
+When `--embedding-mode real_embeddings` is used in evaluation, the runner can consume
+optional `embeddingSimilarity` values from dataset candidate rows to simulate
+real embedding semantic behavior reproducibly.
 
 Report artifact is written to:
 
@@ -59,6 +65,8 @@ Optional args:
 - `--baseline <path>`
 - `--dataset <path>`
 - `--out <report-path>`
+- `--embedding-mode structured_fallback|real_embeddings`
+- `--embedding-model-version <label>`
 
 ## Developer Inspection Utilities
 

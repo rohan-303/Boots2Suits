@@ -13,11 +13,22 @@ import {
 
 type Db = ReturnType<typeof createDbClient>["db"];
 
+type SemanticMode = "real_embeddings" | "structured_fallback";
+
+type MatchFeature = {
+  featureName: string;
+  featureWeight: number;
+  featureValue: number;
+  featureImpact: number;
+  reasonCode: string;
+  detail: string;
+};
+
 const scoringConfig = {
   version: "score-v1",
   algorithmFamily: "hybrid-rule",
-  explanationVersion: "explain-v1",
-  embeddingModelVersion: "structured-placeholder-v1",
+  explanationVersion: "explain-v2",
+  embeddingModelVersion: "structured-fallback-v1",
   rerankerVersion: "none",
   calibrationVersion: "none",
   weights: {
@@ -74,14 +85,48 @@ function toKeywords(values: string[]) {
 function overlapScore(left: Set<string>, right: Set<string>) {
   if (left.size === 0 || right.size === 0) return 0;
   let overlap = 0;
-  for (const item of left) {
-    if (right.has(item)) overlap += 1;
-  }
+  for (const item of left) if (right.has(item)) overlap += 1;
   return overlap / right.size;
 }
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
+}
+
+function parseVector(value: unknown): number[] | null {
+  if (Array.isArray(value)) {
+    const parsed = value.map((item) => Number(item)).filter((item) => Number.isFinite(item));
+    return parsed.length > 0 ? parsed : null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const payload = trimmed.startsWith("[") ? trimmed : `[${trimmed}]`;
+    try {
+      const parsed = JSON.parse(payload);
+      if (!Array.isArray(parsed)) return null;
+      const vector = parsed.map((item) => Number(item)).filter((item) => Number.isFinite(item));
+      return vector.length > 0 ? vector : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function cosineSimilarity(left: number[], right: number[]) {
+  if (left.length === 0 || right.length === 0 || left.length !== right.length) return null;
+  let dot = 0;
+  let normLeft = 0;
+  let normRight = 0;
+  for (let i = 0; i < left.length; i += 1) {
+    dot += left[i] * right[i];
+    normLeft += left[i] ** 2;
+    normRight += right[i] ** 2;
+  }
+  if (normLeft === 0 || normRight === 0) return null;
+  const cosine = dot / (Math.sqrt(normLeft) * Math.sqrt(normRight));
+  return clamp01((cosine + 1) / 2);
 }
 
 function parseClearanceLevel(value: string | null) {
@@ -148,6 +193,12 @@ function detailForFeature(feature: string, score: number) {
       : score >= 0.55
       ? "Some role-cluster alignment with job persona."
       : "Role-cluster alignment with job persona is weak.";
+  if (feature === "embeddingSemanticSimilarity")
+    return score >= 0.8
+      ? "Semantic embedding similarity is strong."
+      : score >= 0.55
+      ? "Semantic embedding similarity is moderate."
+      : "Semantic embedding similarity is weak.";
   if (feature === "leadershipFit")
     return score >= 0.8
       ? "Leadership profile aligns with role expectations."
@@ -227,16 +278,18 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
       .select({
         suggestedRoleFamily: jobPersonas.suggestedRoleFamily,
         leadershipLevel: jobPersonas.leadershipLevel,
-        suggestedCandidateArchetypes: jobPersonas.suggestedCandidateArchetypes
+        suggestedCandidateArchetypes: jobPersonas.suggestedCandidateArchetypes,
+        embedding: jobPersonas.embedding,
+        embeddingModelVersion: jobPersonas.embeddingModelVersion
       })
       .from(jobPersonas)
       .where(and(eq(jobPersonas.jobId, payload.jobId), eq(jobPersonas.scope, "overall")))
       .limit(1);
+    const jobEmbedding = parseVector(jobPersona?.embedding);
 
     const veterans = await db
       .select({
         id: veteranProfiles.id,
-        userId: veteranProfiles.userId,
         locationState: veteranProfiles.locationState,
         preferredWorkModes: veteranProfiles.preferredWorkModes,
         yearsOfService: veteranProfiles.yearsOfService,
@@ -269,7 +322,9 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
         roleClusters: veteranPersonas.roleClusters,
         suggestedJobTitles: veteranPersonas.suggestedJobTitles,
         leadershipProfile: veteranPersonas.leadershipProfile,
-        experienceLevel: veteranPersonas.experienceLevel
+        experienceLevel: veteranPersonas.experienceLevel,
+        embedding: veteranPersonas.embedding,
+        embeddingModelVersion: veteranPersonas.embeddingModelVersion
       })
       .from(veteranPersonas)
       .where(
@@ -282,6 +337,14 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
         )
       );
     const personaByVeteranId = new Map(personas.map((persona) => [persona.veteranProfileId, persona]));
+
+    const semanticWeight = scoringConfig.weights.skillSimilarity + scoringConfig.weights.personaFit;
+    const ruleWeight =
+      scoringConfig.weights.leadershipFit +
+      scoringConfig.weights.experienceFit +
+      scoringConfig.weights.locationFit +
+      scoringConfig.weights.clearanceFit +
+      scoringConfig.weights.compensationFit;
 
     const scored = veterans.map((veteran) => {
       const persona = personaByVeteranId.get(veteran.id);
@@ -304,6 +367,31 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
         ...asStringArray(jobPersona?.suggestedCandidateArchetypes)
       ]);
       const personaFit = clamp01(overlapScore(veteranRoleSignals, jobRoleSignals));
+
+      const structuredSemanticScore = clamp01(
+        (skillSimilarity * scoringConfig.weights.skillSimilarity +
+          personaFit * scoringConfig.weights.personaFit) /
+          semanticWeight
+      );
+
+      const candidateEmbedding = parseVector(persona?.embedding);
+      const embeddingSimilarity =
+        jobEmbedding && candidateEmbedding ? cosineSimilarity(jobEmbedding, candidateEmbedding) : null;
+      const semanticMode: SemanticMode = embeddingSimilarity !== null ? "real_embeddings" : "structured_fallback";
+      const semanticScore =
+        embeddingSimilarity !== null
+          ? clamp01(embeddingSimilarity * 0.7 + structuredSemanticScore * 0.3)
+          : structuredSemanticScore;
+      const semanticEmbeddingModelVersion =
+        semanticMode === "real_embeddings"
+          ? candidateEmbedding &&
+            jobEmbedding &&
+            persona?.embeddingModelVersion === jobPersona?.embeddingModelVersion
+            ? (persona.embeddingModelVersion ?? "unknown-embedding-model")
+            : (persona?.embeddingModelVersion ??
+              jobPersona?.embeddingModelVersion ??
+              "unknown-embedding-model")
+          : "structured-fallback-v1";
 
       const veteranLeadership = inferVeteranLeadershipLevel({
         highestRank: veteran.highestRank,
@@ -364,32 +452,20 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
         compensationFit
       };
 
-      const score = clamp01(
-        Object.entries(componentScores).reduce(
-          (sum, [key, value]) =>
-            sum + value * scoringConfig.weights[key as keyof typeof scoringConfig.weights],
-          0
-        )
-      );
-      const semanticScore = clamp01(
-        (skillSimilarity * scoringConfig.weights.skillSimilarity +
-          personaFit * scoringConfig.weights.personaFit) /
-          (scoringConfig.weights.skillSimilarity + scoringConfig.weights.personaFit)
-      );
       const ruleScore = clamp01(
         (leadershipFit * scoringConfig.weights.leadershipFit +
           experienceFit * scoringConfig.weights.experienceFit +
           locationFit * scoringConfig.weights.locationFit +
           clearanceFit * scoringConfig.weights.clearanceFit +
           compensationFit * scoringConfig.weights.compensationFit) /
-          (scoringConfig.weights.leadershipFit +
-            scoringConfig.weights.experienceFit +
-            scoringConfig.weights.locationFit +
-            scoringConfig.weights.clearanceFit +
-            scoringConfig.weights.compensationFit)
+          ruleWeight
       );
 
-      const features = (Object.entries(componentScores) as Array<[keyof typeof componentScores, number]>)
+      const score = clamp01(semanticScore * semanticWeight + ruleScore * ruleWeight);
+
+      const features: MatchFeature[] = (
+        Object.entries(componentScores) as Array<[keyof typeof componentScores, number]>
+      )
         .map(([featureName, featureValue]) => {
           const featureWeight = scoringConfig.weights[featureName];
           return {
@@ -403,14 +479,31 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
         })
         .sort((a, b) => Math.abs(b.featureImpact) - Math.abs(a.featureImpact));
 
-      const explanation = features
-        .slice(0, 3)
-        .map((feature) => feature.detail)
-        .join(" ");
+      if (embeddingSimilarity !== null) {
+        const embeddingFeatureWeight = semanticWeight;
+        const featureImpact = (embeddingSimilarity - 0.5) * 2 * embeddingFeatureWeight;
+        features.push({
+          featureName: "embeddingSemanticSimilarity",
+          featureWeight: embeddingFeatureWeight,
+          featureValue: embeddingSimilarity,
+          featureImpact,
+          reasonCode: reasonCode("embedding_semantic_similarity", embeddingSimilarity),
+          detail: detailForFeature("embeddingSemanticSimilarity", embeddingSimilarity)
+        });
+        features.sort((a, b) => Math.abs(b.featureImpact) - Math.abs(a.featureImpact));
+      }
+
+      const explanationBullets = features.slice(0, 3).map((feature) => feature.detail);
+      const explanation = explanationBullets.join(" ");
 
       const explanationData = {
         formulaVersion: `${scoringConfig.algorithmFamily}-formula`,
         scoringConfigVersion: scoringConfig.version,
+        semanticMode,
+        embeddingModelVersion: semanticEmbeddingModelVersion,
+        embeddingSimilarity:
+          embeddingSimilarity !== null ? Number(embeddingSimilarity.toFixed(6)) : null,
+        structuredSemanticScore: Number(structuredSemanticScore.toFixed(6)),
         componentScores,
         weights: scoringConfig.weights,
         topContributors: features.slice(0, 5).map((feature) => ({
@@ -426,24 +519,18 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
           JSON.stringify({
             job: jobRow,
             jobPersona,
-            veteran: {
-              id: veteran.id,
-              locationState: veteran.locationState,
-              preferredWorkModes: veteran.preferredWorkModes,
-              yearsOfService: veteran.yearsOfService,
-              clearanceLevel: veteran.clearanceLevel,
-              salaryExpectationMin: veteran.salaryExpectationMin,
-              salaryExpectationMax: veteran.salaryExpectationMax,
-              keySkills: veteran.keySkills,
-              desiredRoles: veteran.desiredRoles
-            },
-            veteranPersona: persona
+            veteran,
+            veteranPersona: persona,
+            semanticMode,
+            semanticEmbeddingModelVersion
           })
         )
         .digest("hex");
 
       return {
         veteranProfileId: veteran.id,
+        semanticMode,
+        semanticEmbeddingModelVersion,
         match: {
           score,
           semanticScore,
@@ -466,12 +553,16 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
     const ranked = [...scored].sort((left, right) => right.match.score - left.match.score);
     await db.delete(candidateJobScores).where(eq(candidateJobScores.matchRunId, payload.matchRunId));
 
+    const runEmbeddingModelVersion =
+      ranked.find((record) => record.semanticMode === "real_embeddings")?.semanticEmbeddingModelVersion ??
+      "structured-fallback-v1";
+
     const scoreRows = ranked.map((item, idx) => ({
       veteranProfileId: item.veteranProfileId,
       jobId: payload.jobId,
       matchRunId: payload.matchRunId,
       algorithmVersion: scoringConfig.algorithmFamily,
-      embeddingModelVersion: scoringConfig.embeddingModelVersion,
+      embeddingModelVersion: item.semanticEmbeddingModelVersion,
       rerankerVersion: scoringConfig.rerankerVersion,
       calibrationVersion: scoringConfig.calibrationVersion,
       scoreVersion: scoringConfig.version,
@@ -519,6 +610,7 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
       .update(matchRuns)
       .set({
         status: "completed",
+        embeddingModelVersion: runEmbeddingModelVersion,
         inputFingerprint,
         sourceSnapshotHash: runSnapshotHash,
         completedAt: new Date(),

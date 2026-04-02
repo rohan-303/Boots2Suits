@@ -4,6 +4,7 @@ export type MatchRunMeta = {
   id: string;
   status: MatchRunStatus;
   algorithmVersion: string;
+  embeddingModelVersion: string;
   scoreVersion: string;
   explanationVersion: string;
   createdAt: string;

@@ -17,6 +17,8 @@ import {
   type WorkflowApplicationStatus
 } from "../applications/service.js";
 import { buildAuthMiddleware, type AuthenticatedRequest } from "../auth/middleware.js";
+import { env } from "../config/env.js";
+import { enqueueEmbeddingGenerationJob } from "../queue/enqueue.js";
 import { generateJobPersona } from "./persona.js";
 
 type Db = ReturnType<typeof createDbClient>["db"];
@@ -500,6 +502,7 @@ export function createEmployerRouter(options: EmployerRouterOptions) {
         disqualifiers: jobPersonas.disqualifiers,
         suggestedRoleFamily: jobPersonas.suggestedRoleFamily,
         modelVersion: jobPersonas.modelVersion,
+        embeddingModelVersion: jobPersonas.embeddingModelVersion,
         sourceSnapshotHash: jobPersonas.sourceSnapshotHash,
         updatedAt: jobPersonas.updatedAt
       })
@@ -568,7 +571,7 @@ export function createEmployerRouter(options: EmployerRouterOptions) {
     });
 
     const now = new Date();
-    await options.db
+    const [savedPersona] = await options.db
       .insert(jobPersonas)
       .values({
         jobId: job.id,
@@ -606,10 +609,29 @@ export function createEmployerRouter(options: EmployerRouterOptions) {
           sourceSnapshotHash: persona.sourceSnapshotHash,
           updatedAt: now
         }
+      })
+      .returning({
+        id: jobPersonas.id,
+        sourceSnapshotHash: jobPersonas.sourceSnapshotHash
       });
+
+    let embeddingEnqueued = false;
+    if (savedPersona?.sourceSnapshotHash) {
+      try {
+        await enqueueEmbeddingGenerationJob(env.REDIS_URL, {
+          targetType: "job_persona",
+          targetId: savedPersona.id,
+          sourceSnapshotHash: savedPersona.sourceSnapshotHash
+        });
+        embeddingEnqueued = true;
+      } catch (error) {
+        console.error("Failed to enqueue job persona embedding generation.", error);
+      }
+    }
 
     return res.json({
       ok: true,
+      embeddingEnqueued,
       persona: {
         scope: "overall",
         summary: persona.summary,

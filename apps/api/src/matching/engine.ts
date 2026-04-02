@@ -85,6 +85,10 @@ export type MatchScoreResult = {
   explanationData: {
     formulaVersion: string;
     scoringConfigVersion: string;
+    semanticMode: "real_embeddings" | "structured_fallback";
+    embeddingModelVersion: string;
+    embeddingSimilarity: number | null;
+    structuredSemanticScore: number;
     componentScores: Record<string, number>;
     weights: Record<string, number>;
     topContributors: Array<{
@@ -230,7 +234,11 @@ function topExplanationBullets(features: FeatureContribution[]) {
 
 export function scoreCandidateJobMatch(
   input: MatchInput,
-  scoringConfig: MatchingScoringConfig = defaultScoringConfig
+  scoringConfig: MatchingScoringConfig = defaultScoringConfig,
+  options?: {
+    embeddingSimilarity?: number | null;
+    embeddingModelVersion?: string | null;
+  }
 ): MatchScoreResult {
   const weights = scoringConfig.weights;
   const veteranSkills = toKeywords(input.veteran.keySkills);
@@ -312,19 +320,31 @@ export function scoreCandidateJobMatch(
     compensationFit
   };
 
-  const score = clamp01(
-    Object.entries(componentScores).reduce((total, [key, value]) => {
-      const weight = weights[key as MatchFeatureKey];
-      return total + value * weight;
-    }, 0)
-  );
-
-  const semanticScore = clamp01(
+  const semanticWeight = weights.skillSimilarity + weights.personaFit;
+  const structuredSemanticScore = clamp01(
     safeNormalize(
       skillSimilarity * weights.skillSimilarity + personaFit * weights.personaFit,
-      weights.skillSimilarity + weights.personaFit
+      semanticWeight
     )
   );
+  const embeddingSimilarity =
+    typeof options?.embeddingSimilarity === "number" ? clamp01(options.embeddingSimilarity) : null;
+  const semanticMode = embeddingSimilarity !== null ? "real_embeddings" : "structured_fallback";
+  const semanticScore =
+    embeddingSimilarity !== null
+      ? clamp01(embeddingSimilarity * 0.7 + structuredSemanticScore * 0.3)
+      : structuredSemanticScore;
+  const semanticEmbeddingModelVersion =
+    semanticMode === "real_embeddings"
+      ? options?.embeddingModelVersion ?? "unknown"
+      : "structured-fallback-v1";
+
+  const ruleWeight =
+    weights.leadershipFit +
+    weights.experienceFit +
+    weights.locationFit +
+    weights.clearanceFit +
+    weights.compensationFit;
   const ruleScore = clamp01(
     safeNormalize(
       leadershipFit * weights.leadershipFit +
@@ -332,13 +352,11 @@ export function scoreCandidateJobMatch(
         locationFit * weights.locationFit +
         clearanceFit * weights.clearanceFit +
         compensationFit * weights.compensationFit,
-      weights.leadershipFit +
-        weights.experienceFit +
-        weights.locationFit +
-        weights.clearanceFit +
-        weights.compensationFit
+      ruleWeight
     )
   );
+
+  const score = clamp01(semanticScore * semanticWeight + ruleScore * ruleWeight);
 
   const features: FeatureContribution[] = (Object.entries(componentScores) as Array<
     [MatchFeatureKey, number]
@@ -353,7 +371,6 @@ export function scoreCandidateJobMatch(
       detail: detailForFeature(featureName, featureValue)
     };
   });
-
   const explanationBullets = topExplanationBullets(features);
   const explanation = explanationBullets.join(" ");
 
@@ -393,6 +410,10 @@ export function scoreCandidateJobMatch(
     explanationData: {
       formulaVersion: `${scoringConfig.algorithmFamily}-formula`,
       scoringConfigVersion: scoringConfig.version,
+      semanticMode,
+      embeddingModelVersion: semanticEmbeddingModelVersion,
+      embeddingSimilarity,
+      structuredSemanticScore: Number(structuredSemanticScore.toFixed(6)),
       componentScores: Object.fromEntries(
         Object.entries(componentScores).map(([key, value]) => [key, Number(value.toFixed(6))])
       ),

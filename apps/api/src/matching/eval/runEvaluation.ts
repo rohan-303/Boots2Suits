@@ -17,6 +17,8 @@ function printSummary(report: ReturnType<typeof runEvaluation>) {
   console.log("Boots2Suits Matching Evaluation");
   console.log(`Dataset: ${report.datasetVersion}`);
   console.log(`Scoring config: ${report.scoringConfigVersion}`);
+  console.log(`Embedding mode: ${report.embeddingMode}`);
+  console.log(`Embedding model: ${report.embeddingModelVersion}`);
   console.log(`Generated: ${report.generatedAt}`);
   console.log("");
   console.log(`Top-1 accuracy: ${report.metrics.top1Accuracy} (${report.metrics.top1Correct}/${report.metrics.totalCases})`);
@@ -35,10 +37,19 @@ function printSummary(report: ReturnType<typeof runEvaluation>) {
 
 function main() {
   const args = process.argv.slice(2);
+  const embeddingModeArg = getArgValue(args, "--embedding-mode");
+  const embeddingMode =
+    embeddingModeArg === "real_embeddings" ? "real_embeddings" : "structured_fallback";
+  const embeddingModelVersion =
+    getArgValue(args, "--embedding-model-version") ??
+    (embeddingMode === "real_embeddings" ? "eval-embedding-sim-v1" : "structured-fallback-v1");
   const datasetPath = resolveDatasetPath(args);
   const scoringConfig = resolveScoringConfig(args);
   const dataset = loadDataset(datasetPath);
-  const report = runEvaluation(dataset, scoringConfig);
+  const report = runEvaluation(dataset, scoringConfig, {
+    embeddingMode,
+    embeddingModelVersion
+  });
 
   const defaultReportPath = path.resolve(
     "reports",

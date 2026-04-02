@@ -21,6 +21,12 @@ function readConfig(configPath: string) {
 
 function main() {
   const args = process.argv.slice(2);
+  const embeddingModeArg = getArgValue(args, "--embedding-mode");
+  const embeddingMode =
+    embeddingModeArg === "real_embeddings" ? "real_embeddings" : "structured_fallback";
+  const embeddingModelVersion =
+    getArgValue(args, "--embedding-model-version") ??
+    (embeddingMode === "real_embeddings" ? "eval-embedding-sim-v1" : "structured-fallback-v1");
   const datasetPath = resolveDatasetPath(args);
   const candidateConfigPath = getArgValue(args, "--candidate");
 
@@ -33,8 +39,12 @@ function main() {
   const candidateConfig = readConfig(candidateConfigPath);
   const dataset = loadDataset(datasetPath);
 
-  const baselineReport = runEvaluation(dataset, baselineConfig);
-  const candidateReport = runEvaluation(dataset, candidateConfig);
+  const runtimeOptions = {
+    embeddingMode,
+    embeddingModelVersion
+  } as const;
+  const baselineReport = runEvaluation(dataset, baselineConfig, runtimeOptions);
+  const candidateReport = runEvaluation(dataset, candidateConfig, runtimeOptions);
 
   const deltas = {
     top1AccuracyDelta: Number(
@@ -68,6 +78,8 @@ function main() {
       generatedAt: new Date().toISOString(),
       datasetVersion: dataset.version,
       scoringConfigVersion: `${baselineConfig.version} vs ${candidateConfig.version}`,
+      embeddingMode,
+      embeddingModelVersion,
       scoringConfig: baselineConfig,
       metrics: candidateReport.metrics,
       cases: candidateReport.cases
@@ -79,6 +91,8 @@ function main() {
   console.log(`Dataset: ${dataset.version}`);
   console.log(`Baseline: ${baselineConfig.version}`);
   console.log(`Candidate: ${candidateConfig.version}`);
+  console.log(`Embedding mode: ${embeddingMode}`);
+  console.log(`Embedding model: ${embeddingModelVersion}`);
   console.log("");
   console.log(`Top-1 accuracy delta: ${deltas.top1AccuracyDelta}`);
   console.log(`Top-3 inclusion delta: ${deltas.top3InclusionRateDelta}`);

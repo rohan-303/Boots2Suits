@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { buildAuthMiddleware, type AuthenticatedRequest } from "../auth/middleware.js";
 import { generateOverallVeteranPersona } from "./persona.js";
-import { enqueueResumeParsingJob } from "../queue/enqueue.js";
+import { enqueueEmbeddingGenerationJob, enqueueResumeParsingJob } from "../queue/enqueue.js";
 import { env } from "../config/env.js";
 
 type Db = ReturnType<typeof createDbClient>["db"];
@@ -197,6 +197,7 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
         technicalProfile: veteranPersonas.technicalProfile,
         suggestedJobTitles: veteranPersonas.suggestedJobTitles,
         modelVersion: veteranPersonas.modelVersion,
+        embeddingModelVersion: veteranPersonas.embeddingModelVersion,
         sourceSnapshotHash: veteranPersonas.sourceSnapshotHash,
         updatedAt: veteranPersonas.updatedAt
       })
@@ -563,7 +564,7 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
 
     const now = new Date();
 
-    await options.db
+    const [savedPersona] = await options.db
       .insert(veteranPersonas)
       .values({
         veteranProfileId: profile.id,
@@ -593,10 +594,29 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
           sourceSnapshotHash: persona.sourceSnapshotHash,
           updatedAt: now
         }
+      })
+      .returning({
+        id: veteranPersonas.id,
+        sourceSnapshotHash: veteranPersonas.sourceSnapshotHash
       });
+
+    let embeddingEnqueued = false;
+    if (savedPersona?.sourceSnapshotHash) {
+      try {
+        await enqueueEmbeddingGenerationJob(env.REDIS_URL, {
+          targetType: "veteran_persona",
+          targetId: savedPersona.id,
+          sourceSnapshotHash: savedPersona.sourceSnapshotHash
+        });
+        embeddingEnqueued = true;
+      } catch (error) {
+        console.error("Failed to enqueue veteran persona embedding generation.", error);
+      }
+    }
 
     return res.json({
       ok: true,
+      embeddingEnqueued,
       persona: {
         scope: "overall",
         summary: persona.summary,

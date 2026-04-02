@@ -45,8 +45,8 @@ const configSchema = z.object({
 export const defaultScoringConfig: MatchingScoringConfig = {
   version: "score-v1",
   algorithmFamily: "hybrid-rule",
-  explanationVersion: "explain-v1",
-  embeddingModelVersion: "structured-placeholder-v1",
+  explanationVersion: "explain-v2",
+  embeddingModelVersion: "structured-fallback-v1",
   rerankerVersion: "none",
   calibrationVersion: "none",
   weights: {

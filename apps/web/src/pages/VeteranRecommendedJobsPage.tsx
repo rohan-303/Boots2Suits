@@ -106,6 +106,11 @@ export function VeteranRecommendedJobsPage() {
             Latest run: {matchRun.id.slice(0, 8)}... ({matchRun.status})
           </p>
         ) : null}
+        {matchRun ? (
+          <p className="mt-1 text-sm text-slate-500">
+            Embedding mode/model: {matchRun.embeddingModelVersion}
+          </p>
+        ) : null}
         {error ? <p className="mt-3 text-sm font-medium text-rose-700">{error}</p> : null}
       </div>
 

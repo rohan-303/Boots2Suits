@@ -44,7 +44,7 @@ This schema supports the MVP-critical data model for:
   - profile personas by scope (`overall`, `leadership`, `technical`, `culture`)
   - overall persona supports structured outputs: strengths, role clusters,
     experience level, leadership/technical profiles, suggested job titles,
-    model version, and source snapshot hash
+    model version, embedding model version, source snapshot hash, and embedding timestamp
 - `jobs`
   - job posting + ATS sync fields
   - structured posting fields for persona-ready modeling:
@@ -55,7 +55,8 @@ This schema supports the MVP-critical data model for:
   - deterministic employer-facing persona output fields:
     `leadership_level`, `execution_vs_strategy`, `environment_type`,
     `technical_depth`, `suggested_candidate_archetypes`, `priority_signals`,
-    `disqualifiers`, `suggested_role_family`, `model_version`, `source_snapshot_hash`
+    `disqualifiers`, `suggested_role_family`, `model_version`,
+    `embedding_model_version`, `source_snapshot_hash`
 - `applications`
   - current application state (no longer hard-unique by profile/job)
   - includes ATS sync fields
@@ -141,6 +142,7 @@ The schema enforces low-risk/high-value checks:
 - `packages/db/drizzle/0005_resume_ingestion_foundation.sql`
 - `packages/db/drizzle/0006_application_workflow_statuses.sql`
 - `packages/db/drizzle/0007_async_processing_foundation.sql`
+- `packages/db/drizzle/0008_embeddings_foundation.sql`
 - `packages/db/drizzle/meta/_journal.json`
 
 ## Commands

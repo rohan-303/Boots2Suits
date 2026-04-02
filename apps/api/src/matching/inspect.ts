@@ -63,6 +63,19 @@ async function inspectPair(db: ReturnType<typeof createDbClient>["db"], jobId: s
 
   console.log(`Pair Inspection: job=${jobId} veteranProfile=${veteranProfileId}`);
   console.log(`Match run: ${scoreRow.matchRunId}`);
+  const explanationMeta =
+    scoreRow.explanationData && typeof scoreRow.explanationData === "object"
+      ? (scoreRow.explanationData as {
+          semanticMode?: string;
+          embeddingModelVersion?: string;
+          embeddingSimilarity?: number | null;
+        })
+      : null;
+  if (explanationMeta) {
+    console.log(
+      `Semantic mode: ${explanationMeta.semanticMode ?? "unknown"} | embedding model: ${explanationMeta.embeddingModelVersion ?? "n/a"} | embedding similarity: ${explanationMeta.embeddingSimilarity ?? "n/a"}`
+    );
+  }
   console.log(`Score: ${toNum(scoreRow.score)} | semantic: ${toNum(scoreRow.semanticScore)} | rule: ${toNum(scoreRow.ruleScore)} | rank: ${scoreRow.rank}`);
   console.log(`Explanation: ${scoreRow.explanation}`);
   console.log("Features:");
