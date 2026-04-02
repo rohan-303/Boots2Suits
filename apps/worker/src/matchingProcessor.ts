@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { NonRetryableJobError, isRetryableErrorType, normalizeError } from "@boots2suits/shared";
 import {
   candidateJobScoreFeatures,
   candidateJobScores,
@@ -13,7 +14,7 @@ import {
 
 type Db = ReturnType<typeof createDbClient>["db"];
 
-type SemanticMode = "real_embeddings" | "structured_fallback";
+type SemanticMode = "real_embeddings" | "structured_fallback" | "rule_only_fallback";
 
 type MatchFeature = {
   featureName: string;
@@ -31,6 +32,14 @@ const scoringConfig = {
   embeddingModelVersion: "structured-fallback-v1",
   rerankerVersion: "none",
   calibrationVersion: "none",
+  hybridWeights: {
+    semantic: 0.6,
+    rule: 0.4
+  },
+  semanticBlendWeights: {
+    embedding: 0.8,
+    structured: 0.2
+  },
   weights: {
     skillSimilarity: 0.35,
     personaFit: 0.2,
@@ -242,7 +251,47 @@ function buildMatchRunFingerprint(input: { jobId: string; jobSnapshotHash: strin
     .digest("hex");
 }
 
-export async function processMatchingRun(db: Db, payload: { matchRunId: string; jobId: string }) {
+export async function processMatchingRun(
+  db: Db,
+  payload: { matchRunId: string; jobId: string },
+  context: { attemptNumber: number; maxAttempts: number; startedAt: number },
+  options?: {
+    semanticWeight?: number;
+    ruleWeight?: number;
+    embeddingBlendWeight?: number;
+    structuredBlendWeight?: number;
+  }
+) {
+  const [runRow] = await db
+    .select({
+      id: matchRuns.id,
+      status: matchRuns.status,
+      attempts: matchRuns.attempts
+    })
+    .from(matchRuns)
+    .where(eq(matchRuns.id, payload.matchRunId))
+    .limit(1);
+  if (!runRow) {
+    throw new NonRetryableJobError("Matching run not found.", "VALIDATION_ERROR");
+  }
+
+  if (runRow.status === "completed") {
+    return;
+  }
+  const nextAttempt = (runRow.attempts ?? 0) + 1;
+
+  const appliedScoringConfig = {
+    ...scoringConfig,
+    hybridWeights: {
+      semantic: options?.semanticWeight ?? scoringConfig.hybridWeights.semantic,
+      rule: options?.ruleWeight ?? scoringConfig.hybridWeights.rule
+    },
+    semanticBlendWeights: {
+      embedding: options?.embeddingBlendWeight ?? scoringConfig.semanticBlendWeights.embedding,
+      structured: options?.structuredBlendWeight ?? scoringConfig.semanticBlendWeights.structured
+    }
+  };
+
   await db
     .update(matchRuns)
     .set({
@@ -250,7 +299,12 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
       startedAt: new Date(),
       failedAt: null,
       completedAt: null,
-      errorMessage: null
+      errorMessage: null,
+      errorType: null,
+      errorStack: null,
+      attempts: nextAttempt,
+      retryCount: Math.max(0, nextAttempt - 1),
+      lastRetriedAt: nextAttempt > 1 ? new Date() : null
     })
     .where(eq(matchRuns.id, payload.matchRunId));
 
@@ -272,7 +326,9 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
       .from(jobs)
       .where(eq(jobs.id, payload.jobId))
       .limit(1);
-    if (!jobRow) throw new Error("Matching worker: job not found.");
+    if (!jobRow) {
+      throw new NonRetryableJobError("Matching worker: job not found.", "VALIDATION_ERROR");
+    }
 
     const [jobPersona] = await db
       .select({
@@ -310,7 +366,12 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
         .set({
           status: "failed",
           failedAt: new Date(),
-          errorMessage: "No eligible veterans available for matching."
+          errorMessage: "No eligible veterans available for matching.",
+          errorType: "VALIDATION_ERROR",
+          errorStack: null,
+          attempts: nextAttempt,
+          retryCount: Math.max(0, nextAttempt - 1),
+          durationMs: Date.now() - context.startedAt
         })
         .where(eq(matchRuns.id, payload.matchRunId));
       return;
@@ -338,13 +399,14 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
       );
     const personaByVeteranId = new Map(personas.map((persona) => [persona.veteranProfileId, persona]));
 
-    const semanticWeight = scoringConfig.weights.skillSimilarity + scoringConfig.weights.personaFit;
+    const semanticWeight =
+      appliedScoringConfig.weights.skillSimilarity + appliedScoringConfig.weights.personaFit;
     const ruleWeight =
-      scoringConfig.weights.leadershipFit +
-      scoringConfig.weights.experienceFit +
-      scoringConfig.weights.locationFit +
-      scoringConfig.weights.clearanceFit +
-      scoringConfig.weights.compensationFit;
+      appliedScoringConfig.weights.leadershipFit +
+      appliedScoringConfig.weights.experienceFit +
+      appliedScoringConfig.weights.locationFit +
+      appliedScoringConfig.weights.clearanceFit +
+      appliedScoringConfig.weights.compensationFit;
 
     const scored = veterans.map((veteran) => {
       const persona = personaByVeteranId.get(veteran.id);
@@ -369,19 +431,23 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
       const personaFit = clamp01(overlapScore(veteranRoleSignals, jobRoleSignals));
 
       const structuredSemanticScore = clamp01(
-        (skillSimilarity * scoringConfig.weights.skillSimilarity +
-          personaFit * scoringConfig.weights.personaFit) /
+        (skillSimilarity * appliedScoringConfig.weights.skillSimilarity +
+          personaFit * appliedScoringConfig.weights.personaFit) /
           semanticWeight
       );
+      const semanticKeywordOverlap = [...veteranSkills].filter((item) => mustSkills.has(item)).slice(0, 8);
 
       const candidateEmbedding = parseVector(persona?.embedding);
       const embeddingSimilarity =
         jobEmbedding && candidateEmbedding ? cosineSimilarity(jobEmbedding, candidateEmbedding) : null;
-      const semanticMode: SemanticMode = embeddingSimilarity !== null ? "real_embeddings" : "structured_fallback";
+      const semanticMode: SemanticMode = embeddingSimilarity !== null ? "real_embeddings" : "rule_only_fallback";
       const semanticScore =
         embeddingSimilarity !== null
-          ? clamp01(embeddingSimilarity * 0.7 + structuredSemanticScore * 0.3)
-          : structuredSemanticScore;
+          ? clamp01(
+              embeddingSimilarity * appliedScoringConfig.semanticBlendWeights.embedding +
+                structuredSemanticScore * appliedScoringConfig.semanticBlendWeights.structured
+            )
+          : 0;
       const semanticEmbeddingModelVersion =
         semanticMode === "real_embeddings"
           ? candidateEmbedding &&
@@ -453,21 +519,27 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
       };
 
       const ruleScore = clamp01(
-        (leadershipFit * scoringConfig.weights.leadershipFit +
-          experienceFit * scoringConfig.weights.experienceFit +
-          locationFit * scoringConfig.weights.locationFit +
-          clearanceFit * scoringConfig.weights.clearanceFit +
-          compensationFit * scoringConfig.weights.compensationFit) /
+        (leadershipFit * appliedScoringConfig.weights.leadershipFit +
+          experienceFit * appliedScoringConfig.weights.experienceFit +
+          locationFit * appliedScoringConfig.weights.locationFit +
+          clearanceFit * appliedScoringConfig.weights.clearanceFit +
+          compensationFit * appliedScoringConfig.weights.compensationFit) /
           ruleWeight
       );
 
-      const score = clamp01(semanticScore * semanticWeight + ruleScore * ruleWeight);
+      const score =
+        semanticMode === "rule_only_fallback"
+          ? ruleScore
+          : clamp01(
+              semanticScore * appliedScoringConfig.hybridWeights.semantic +
+                ruleScore * appliedScoringConfig.hybridWeights.rule
+            );
 
       const features: MatchFeature[] = (
         Object.entries(componentScores) as Array<[keyof typeof componentScores, number]>
       )
         .map(([featureName, featureValue]) => {
-          const featureWeight = scoringConfig.weights[featureName];
+          const featureWeight = appliedScoringConfig.weights[featureName];
           return {
             featureName,
             featureWeight,
@@ -492,20 +564,40 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
         });
         features.sort((a, b) => Math.abs(b.featureImpact) - Math.abs(a.featureImpact));
       }
+      if (semanticKeywordOverlap.length > 0) {
+        const overlapRatio = semanticKeywordOverlap.length / Math.max(1, mustSkills.size);
+        const impact = (overlapRatio - 0.5) * 2 * appliedScoringConfig.hybridWeights.semantic;
+        features.push({
+          featureName: "semanticKeywordOverlap",
+          featureWeight: appliedScoringConfig.hybridWeights.semantic,
+          featureValue: overlapRatio,
+          featureImpact: impact,
+          reasonCode: "semantic_terms_overlap",
+          detail: `Semantic overlap terms: ${semanticKeywordOverlap.join(", ")}.`
+        });
+        features.sort((a, b) => Math.abs(b.featureImpact) - Math.abs(a.featureImpact));
+      }
 
       const explanationBullets = features.slice(0, 3).map((feature) => feature.detail);
       const explanation = explanationBullets.join(" ");
 
       const explanationData = {
-        formulaVersion: `${scoringConfig.algorithmFamily}-formula`,
-        scoringConfigVersion: scoringConfig.version,
+        formulaVersion: `${appliedScoringConfig.algorithmFamily}-formula`,
+        scoringConfigVersion: appliedScoringConfig.version,
         semanticMode,
         embeddingModelVersion: semanticEmbeddingModelVersion,
         embeddingSimilarity:
           embeddingSimilarity !== null ? Number(embeddingSimilarity.toFixed(6)) : null,
         structuredSemanticScore: Number(structuredSemanticScore.toFixed(6)),
+        semanticKeywordOverlap,
         componentScores,
-        weights: scoringConfig.weights,
+        weights: {
+          ...appliedScoringConfig.weights,
+          hybridSemanticWeight: appliedScoringConfig.hybridWeights.semantic,
+          hybridRuleWeight: appliedScoringConfig.hybridWeights.rule,
+          semanticEmbeddingBlendWeight: appliedScoringConfig.semanticBlendWeights.embedding,
+          semanticStructuredBlendWeight: appliedScoringConfig.semanticBlendWeights.structured
+        },
         topContributors: features.slice(0, 5).map((feature) => ({
           feature: feature.featureName,
           impact: Number(feature.featureImpact.toFixed(6)),
@@ -561,12 +653,12 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
       veteranProfileId: item.veteranProfileId,
       jobId: payload.jobId,
       matchRunId: payload.matchRunId,
-      algorithmVersion: scoringConfig.algorithmFamily,
+      algorithmVersion: appliedScoringConfig.algorithmFamily,
       embeddingModelVersion: item.semanticEmbeddingModelVersion,
-      rerankerVersion: scoringConfig.rerankerVersion,
-      calibrationVersion: scoringConfig.calibrationVersion,
-      scoreVersion: scoringConfig.version,
-      explanationVersion: scoringConfig.explanationVersion,
+      rerankerVersion: appliedScoringConfig.rerankerVersion,
+      calibrationVersion: appliedScoringConfig.calibrationVersion,
+      scoreVersion: appliedScoringConfig.version,
+      explanationVersion: appliedScoringConfig.explanationVersion,
       inputFingerprint,
       sourceSnapshotHash: item.match.sourceSnapshotHash,
       score: item.match.score.toFixed(6),
@@ -614,18 +706,51 @@ export async function processMatchingRun(db: Db, payload: { matchRunId: string; 
         inputFingerprint,
         sourceSnapshotHash: runSnapshotHash,
         completedAt: new Date(),
-        errorMessage: null
+        errorMessage: null,
+        errorType: null,
+        errorStack: null,
+        attempts: nextAttempt,
+        retryCount: Math.max(0, nextAttempt - 1),
+        durationMs: Date.now() - context.startedAt
       })
       .where(eq(matchRuns.id, payload.matchRunId));
   } catch (error) {
+    const normalized = normalizeError(error);
+    const retryable = isRetryableErrorType(normalized.errorType);
+    const isFinalAttempt = !retryable || context.attemptNumber >= context.maxAttempts;
+    const failedAt = new Date();
+    const failureUpdate: {
+      status: "failed" | "queued";
+      failedAt: Date;
+      errorMessage: string;
+      errorType: string;
+      errorStack: string | null;
+      attempts: number;
+      retryCount: number;
+      lastRetriedAt: Date | null;
+      durationMs: number;
+      queuedAt?: Date;
+    } = {
+      status: isFinalAttempt ? "failed" : "queued",
+      failedAt,
+      errorMessage: normalized.errorMessage,
+      errorType: normalized.errorType,
+      errorStack: normalized.errorStack,
+      attempts: nextAttempt,
+      retryCount: Math.max(0, nextAttempt - 1),
+      lastRetriedAt: nextAttempt > 1 ? new Date() : null,
+      durationMs: Date.now() - context.startedAt
+    };
+    if (retryable && !isFinalAttempt) {
+      failureUpdate.queuedAt = new Date();
+    }
     await db
       .update(matchRuns)
-      .set({
-        status: "failed",
-        failedAt: new Date(),
-        errorMessage: error instanceof Error ? error.message : "Matching run failed."
-      })
+      .set(failureUpdate)
       .where(eq(matchRuns.id, payload.matchRunId));
+    if (!retryable) {
+      throw new NonRetryableJobError(normalized.errorMessage, normalized.errorType);
+    }
     throw error;
   }
 }

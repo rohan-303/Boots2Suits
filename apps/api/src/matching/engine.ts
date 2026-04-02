@@ -85,10 +85,11 @@ export type MatchScoreResult = {
   explanationData: {
     formulaVersion: string;
     scoringConfigVersion: string;
-    semanticMode: "real_embeddings" | "structured_fallback";
+    semanticMode: "real_embeddings" | "structured_fallback" | "rule_only_fallback";
     embeddingModelVersion: string;
     embeddingSimilarity: number | null;
     structuredSemanticScore: number;
+    semanticKeywordOverlap: string[];
     componentScores: Record<string, number>;
     weights: Record<string, number>;
     topContributors: Array<{
@@ -238,6 +239,7 @@ export function scoreCandidateJobMatch(
   options?: {
     embeddingSimilarity?: number | null;
     embeddingModelVersion?: string | null;
+    semanticFallbackMode?: "structured" | "rule_only";
   }
 ): MatchScoreResult {
   const weights = scoringConfig.weights;
@@ -327,13 +329,25 @@ export function scoreCandidateJobMatch(
       semanticWeight
     )
   );
+  const semanticKeywordOverlap = [...veteranSkills].filter((item) => mustSkills.has(item)).slice(0, 8);
   const embeddingSimilarity =
     typeof options?.embeddingSimilarity === "number" ? clamp01(options.embeddingSimilarity) : null;
-  const semanticMode = embeddingSimilarity !== null ? "real_embeddings" : "structured_fallback";
+  const fallbackMode = options?.semanticFallbackMode ?? "rule_only";
+  const semanticMode =
+    embeddingSimilarity !== null
+      ? "real_embeddings"
+      : fallbackMode === "structured"
+      ? "structured_fallback"
+      : "rule_only_fallback";
   const semanticScore =
     embeddingSimilarity !== null
-      ? clamp01(embeddingSimilarity * 0.7 + structuredSemanticScore * 0.3)
-      : structuredSemanticScore;
+      ? clamp01(
+          embeddingSimilarity * scoringConfig.semanticBlendWeights.embedding +
+            structuredSemanticScore * scoringConfig.semanticBlendWeights.structured
+        )
+      : fallbackMode === "structured"
+      ? structuredSemanticScore
+      : 0;
   const semanticEmbeddingModelVersion =
     semanticMode === "real_embeddings"
       ? options?.embeddingModelVersion ?? "unknown"
@@ -356,7 +370,13 @@ export function scoreCandidateJobMatch(
     )
   );
 
-  const score = clamp01(semanticScore * semanticWeight + ruleScore * ruleWeight);
+  const score =
+    semanticMode === "rule_only_fallback"
+      ? ruleScore
+      : clamp01(
+          semanticScore * scoringConfig.hybridWeights.semantic +
+            ruleScore * scoringConfig.hybridWeights.rule
+        );
 
   const features: FeatureContribution[] = (Object.entries(componentScores) as Array<
     [MatchFeatureKey, number]
@@ -414,6 +434,7 @@ export function scoreCandidateJobMatch(
       embeddingModelVersion: semanticEmbeddingModelVersion,
       embeddingSimilarity,
       structuredSemanticScore: Number(structuredSemanticScore.toFixed(6)),
+      semanticKeywordOverlap,
       componentScores: Object.fromEntries(
         Object.entries(componentScores).map(([key, value]) => [key, Number(value.toFixed(6))])
       ),

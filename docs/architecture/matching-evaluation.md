@@ -30,7 +30,10 @@ Example candidate config:
 
 - `apps/api/src/matching/configs/candidate-emphasis-skill-persona.json`
 
-Scoring config is versioned and validated (weights must sum to 1).
+Scoring config is versioned and validated:
+- component feature weights must sum to 1
+- hybrid weights (`semantic` + `rule`) must sum to 1
+- semantic blend weights (`embedding` + `structured`) must sum to 1
 
 ## Run Evaluation
 
@@ -50,6 +53,12 @@ When `--embedding-mode real_embeddings` is used in evaluation, the runner can co
 optional `embeddingSimilarity` values from dataset candidate rows to simulate
 real embedding semantic behavior reproducibly.
 
+Compare structured-only vs hybrid embedding mode:
+
+```bash
+npm run match:evaluate:compare --workspace @boots2suits/api
+```
+
 Report artifact is written to:
 
 - `apps/api/reports/matching-eval-*.json`
@@ -67,6 +76,25 @@ Optional args:
 - `--out <report-path>`
 - `--embedding-mode structured_fallback|real_embeddings`
 - `--embedding-model-version <label>`
+
+## Quality Gate
+
+Quality gate baseline config:
+
+- `apps/api/src/matching/eval/baseline/starter-baseline.json`
+
+Run quality gate:
+
+```bash
+npm run match:quality-gate --workspace @boots2suits/api
+```
+
+The quality gate compares current evaluation results against:
+
+- minimum metric thresholds
+- locked baseline metrics with max degradation allowances
+
+CI fails if thresholds are missed or degradation exceeds allowed bounds.
 
 ## Developer Inspection Utilities
 

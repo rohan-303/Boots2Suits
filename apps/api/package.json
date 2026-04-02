@@ -13,9 +13,16 @@
     "lint": "tsc -p tsconfig.json --noEmit",
     "pretypecheck": "npm run build --workspace @boots2suits/db && npm run build --workspace @boots2suits/shared",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "match:evaluate": "tsx src/matching/eval/runEvaluation.ts",
-    "match:calibrate": "tsx src/matching/eval/runCalibration.ts",
-    "match:inspect": "tsx src/matching/inspect.ts"
+    "prebuild:all": "npm run build --workspace @boots2suits/db && npm run build --workspace @boots2suits/shared && npm run build",
+    "match:evaluate": "npm run prebuild:all && node dist/matching/eval/runEvaluation.js",
+    "match:evaluate:compare": "npm run prebuild:all && node dist/matching/eval/runEvaluation.js --compare-modes",
+    "match:calibrate": "npm run prebuild:all && node dist/matching/eval/runCalibration.js",
+    "match:inspect": "npm run prebuild:all && node dist/matching/inspect.js",
+    "match:quality-gate": "npm run prebuild:all && node dist/matching/eval/runQualityGate.js",
+    "queue:inspect": "npm run prebuild:all && node dist/queue/inspect.js",
+    "pretest": "npm run build --workspace @boots2suits/db && npm run build --workspace @boots2suits/shared && npm run build",
+    "test": "node dist/tests/runTests.js",
+    "test:watch": "npm run test"
   },
   "dependencies": {
     "@boots2suits/db": "0.1.0",
@@ -32,6 +39,8 @@
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^20.12.7",
+    "@types/supertest": "^7.2.0",
+    "supertest": "^7.2.2",
     "tsx": "^4.7.2",
     "typescript": "^5.4.5"
   }

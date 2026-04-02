@@ -5,6 +5,7 @@ import {
   inArray
 } from "drizzle-orm";
 import { Router } from "express";
+import { apiLogger } from "@boots2suits/shared";
 import {
   candidateJobScoreFeatures,
   candidateJobScores,
@@ -43,8 +44,9 @@ function toNum(value: unknown) {
 }
 
 function requestedEmbeddingModelVersion() {
-  if (env.EMBEDDINGS_PROVIDER === "openai" && env.EMBEDDINGS_API_KEY) {
-    return `openai:${env.EMBEDDINGS_MODEL}`;
+  const model = env.EMBEDDINGS_MODEL ?? env.EMBEDDING_MODEL;
+  if (env.EMBEDDINGS_ENABLED && env.EMBEDDINGS_PROVIDER === "openai" && env.EMBEDDINGS_API_KEY) {
+    return `openai:${model}`;
   }
   return "structured-fallback-v1";
 }
@@ -64,6 +66,12 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
     if (!authUser) {
       return res.status(401).json({ ok: false, error: "Authentication required." });
     }
+    const log = apiLogger.timed("matching.run.trigger", {
+      action: "matching_run_trigger",
+      route: "POST /matching/jobs/:jobId/run",
+      userId: authUser.id,
+      jobId: req.params.jobId
+    });
 
     const jobId = req.params.jobId;
     const [jobRow] = await options.db
@@ -81,11 +89,36 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
       .limit(1);
 
     if (!jobRow) {
+      log.fail(new Error("Job not found."));
       return res.status(404).json({ ok: false, error: "Job not found." });
     }
 
     if (jobRow.status === "closed") {
+      log.fail(new Error("Cannot run matching for a closed job."));
       return res.status(400).json({ ok: false, error: "Cannot run matching for a closed job." });
+    }
+
+    const [activeRun] = await options.db
+      .select({
+        id: matchRuns.id,
+        status: matchRuns.status
+      })
+      .from(matchRuns)
+      .where(and(eq(matchRuns.jobId, jobId), inArray(matchRuns.status, ["queued", "running"])))
+      .orderBy(desc(matchRuns.createdAt))
+      .limit(1);
+
+    if (activeRun) {
+      log.success({
+        status: "deduped",
+        matchRunId: activeRun.id
+      });
+      return res.status(202).json({
+        ok: true,
+        deduped: true,
+        matchRunId: activeRun.id,
+        status: activeRun.status
+      });
     }
 
     const [run] = await options.db
@@ -99,6 +132,7 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
         scoreVersion: defaultScoringConfig.version,
         explanationVersion: defaultScoringConfig.explanationVersion,
         status: "queued",
+        queuedAt: new Date(),
         requestedByUserId: authUser.id
       })
       .returning({ id: matchRuns.id });
@@ -108,6 +142,9 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
         matchRunId: run.id,
         jobId,
         requestedByUserId: authUser.id
+      }, {
+        attempts: env.QUEUE_MATCHING_JOB_ATTEMPTS ?? env.QUEUE_JOB_ATTEMPTS,
+        backoffMs: env.QUEUE_MATCHING_JOB_BACKOFF_MS ?? env.QUEUE_JOB_BACKOFF_MS
       });
     } catch (error) {
       await options.db
@@ -115,15 +152,27 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
         .set({
           status: "failed",
           failedAt: new Date(),
-          errorMessage: error instanceof Error ? error.message : "Failed to enqueue match run."
+          errorMessage: error instanceof Error ? error.message : "Failed to enqueue match run.",
+          errorType: "SYSTEM_ERROR",
+          errorStack: error instanceof Error ? (error.stack ?? null) : null
         })
         .where(eq(matchRuns.id, run.id));
+
+      log.fail(error, {
+        status: "fail",
+        matchRunId: run.id
+      });
 
       return res.status(500).json({
         ok: false,
         error: "Unable to enqueue matching run."
       });
     }
+
+    log.success({
+      status: "success",
+      matchRunId: run.id
+    });
 
     return res.status(202).json({
       ok: true,

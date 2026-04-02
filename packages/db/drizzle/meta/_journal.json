@@ -64,6 +64,34 @@
       "when": 1774901400000,
       "tag": "0008_embeddings_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1774905000000,
+      "tag": "0009_observability_async_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1774908600000,
+      "tag": "0010_embeddings_status_and_hybrid_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1774912200000,
+      "tag": "0011_ats_export_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1774915800000,
+      "tag": "0012_async_reliability_hardening",
+      "breakpoints": true
     }
   ]
 }

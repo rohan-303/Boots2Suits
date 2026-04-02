@@ -9,8 +9,13 @@ export type EmbeddingsProvider = {
 };
 
 const envSchema = z.object({
+  EMBEDDINGS_ENABLED: z
+    .union([z.literal("true"), z.literal("false")])
+    .default("false")
+    .transform((value) => value === "true"),
   EMBEDDINGS_PROVIDER: z.enum(["none", "openai"]).default("none"),
-  EMBEDDINGS_MODEL: z.string().min(1).default("text-embedding-3-small"),
+  EMBEDDING_MODEL: z.string().min(1).default("text-embedding-3-small"),
+  EMBEDDINGS_MODEL: z.string().optional(),
   EMBEDDINGS_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
   EMBEDDINGS_API_KEY: z.string().optional()
 });
@@ -33,13 +38,13 @@ function fallbackProvider(): EmbeddingsProvider {
 
 export function createEmbeddingsProviderFromEnv(): EmbeddingsProvider {
   const env = envSchema.parse(process.env);
+  const model = env.EMBEDDINGS_MODEL ?? env.EMBEDDING_MODEL;
 
-  if (env.EMBEDDINGS_PROVIDER !== "openai" || !env.EMBEDDINGS_API_KEY) {
+  if (!env.EMBEDDINGS_ENABLED || env.EMBEDDINGS_PROVIDER !== "openai" || !env.EMBEDDINGS_API_KEY) {
     return fallbackProvider();
   }
 
   const baseUrl = env.EMBEDDINGS_BASE_URL.replace(/\/$/, "");
-  const model = env.EMBEDDINGS_MODEL;
 
   return {
     mode: "real_embeddings",

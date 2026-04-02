@@ -30,3 +30,5 @@ export type EmbeddingGenerationJobPayload = {
   targetId: string;
   sourceSnapshotHash: string;
 };
+
+export * from "./observability.js";

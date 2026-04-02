@@ -7,6 +7,7 @@ import { PublicOnlyRoute } from "./components/PublicOnlyRoute";
 import { AdminDashboardPage } from "./pages/AdminDashboardPage";
 import { EmployerDashboardPage } from "./pages/EmployerDashboardPage";
 import { EmployerJobDetailPage } from "./pages/EmployerJobDetailPage";
+import { EmployerCandidateDetailPage } from "./pages/EmployerCandidateDetailPage";
 import { EmployerJobMatchesPage } from "./pages/EmployerJobMatchesPage";
 import { EmployerJobPersonaPage } from "./pages/EmployerJobPersonaPage";
 import { EmployerJobsPage } from "./pages/EmployerJobsPage";
@@ -54,6 +55,10 @@ export function App() {
                 <Route path="/app/employer/jobs" element={<EmployerJobsPage />} />
                 <Route path="/app/employer/jobs/:jobId" element={<EmployerJobDetailPage />} />
                 <Route path="/app/employer/jobs/:jobId/matches" element={<EmployerJobMatchesPage />} />
+                <Route
+                  path="/app/employer/jobs/:jobId/candidates/:veteranProfileId"
+                  element={<EmployerCandidateDetailPage />}
+                />
                 <Route
                   path="/app/employer/jobs/:jobId/persona"
                   element={<EmployerJobPersonaPage />}

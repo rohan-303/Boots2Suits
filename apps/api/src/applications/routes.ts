@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { Router } from "express";
+import { apiLogger } from "@boots2suits/shared";
 import {
   applicationEvents,
   applications,
@@ -43,14 +44,21 @@ export function createApplicationsRouter(options: ApplicationsRouterOptions) {
     if (!authUser) {
       return res.status(401).json({ ok: false, error: "Authentication required." });
     }
+    const log = apiLogger.timed("application.submit", {
+      action: "application_submit",
+      route: "POST /applications",
+      userId: authUser.id
+    });
 
     const parsed = createApplicationSchema.safeParse(req.body);
     if (!parsed.success) {
+      log.fail(new Error("Invalid application payload."));
       return res.status(400).json({ ok: false, error: "Invalid application payload." });
     }
 
     const profile = await getVeteranProfileByUserId(options.db, authUser.id);
     if (!profile) {
+      log.fail(new Error("Veteran profile required before apply."));
       return res.status(400).json({ ok: false, error: "Veteran profile is required before applying." });
     }
 
@@ -64,15 +72,18 @@ export function createApplicationsRouter(options: ApplicationsRouterOptions) {
       .limit(1);
 
     if (!job) {
+      log.fail(new Error("Job not found."));
       return res.status(404).json({ ok: false, error: "Job not found." });
     }
 
     if (job.status === "closed") {
+      log.fail(new Error("Cannot apply to closed job."));
       return res.status(400).json({ ok: false, error: "Cannot apply to a closed job." });
     }
 
     const latest = await getLatestApplicationForPair(options.db, profile.id, parsed.data.jobId);
     if (latest && isActiveApplicationStatus(latest.status)) {
+      log.fail(new Error(`Duplicate active application: ${latest.status}.`));
       return res.status(409).json({
         ok: false,
         error: `Already applied with active status: ${latest.status}.`
@@ -88,6 +99,12 @@ export function createApplicationsRouter(options: ApplicationsRouterOptions) {
       createdByUserId: authUser.id,
       reasonCode: "veteran_applied",
       note: "Application submitted by veteran."
+    });
+
+    log.success({
+      status: "success",
+      jobId: parsed.data.jobId,
+      applicationId: created.id
     });
 
     return res.status(201).json({

@@ -1,12 +1,19 @@
 import type { AuthUser, UserRole } from "../auth/types";
 import type {
+  JobCandidateExportDetail,
+  JobCandidateExportSummary,
   EmployerJob,
   EmployerJobDetail,
   EmployerProfile,
   JobPersona
 } from "../types/employer";
 import type { VeteranApplication } from "../types/application";
-import type { EmployerMatchResult, MatchRunMeta, VeteranRecommendation } from "../types/matching";
+import type {
+  EmployerCandidateDetail,
+  EmployerMatchResult,
+  MatchRunMeta,
+  VeteranRecommendation
+} from "../types/matching";
 import type {
   MilitaryOccupationSearchResult,
   VeteranPersona,
@@ -231,6 +238,17 @@ export async function getJobMatchResults(jobId: string) {
   }>(`/matching/jobs/${jobId}/results`, { method: "GET" });
 }
 
+export async function getEmployerCandidateDetail(jobId: string, veteranProfileId: string) {
+  return request<{
+    ok: true;
+    candidate: EmployerCandidateDetail["candidate"];
+    jobContext: EmployerCandidateDetail["jobContext"];
+    match: EmployerCandidateDetail["match"];
+    evidence: EmployerCandidateDetail["evidence"];
+    application: EmployerCandidateDetail["application"];
+  }>(`/employer/jobs/${jobId}/candidates/${veteranProfileId}`, { method: "GET" });
+}
+
 export async function getVeteranJobRecommendations(veteranProfileId: string) {
   return request<{
     ok: true;
@@ -290,4 +308,41 @@ export async function employerResetCandidateAction(jobId: string, veteranProfile
     ok: true;
     application: { id: string; status: string };
   }>(`/employer/jobs/${jobId}/candidates/${veteranProfileId}/reset`, { method: "POST" });
+}
+
+export async function createEmployerJobExport(
+  jobId: string,
+  payload: {
+    candidateProfileIds: string[];
+    exportTarget?: string;
+    exportFormat?: "json" | "csv";
+    externalSource?: string;
+    externalId?: string;
+  }
+) {
+  return request<{
+    ok: true;
+    exportId: string;
+    status: "pending" | "exported" | "failed";
+    candidateCount?: number;
+    reused?: boolean;
+  }>(`/employer/jobs/${jobId}/export`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function getEmployerJobExports(jobId: string) {
+  return request<{
+    ok: true;
+    exports: JobCandidateExportSummary[];
+  }>(`/employer/jobs/${jobId}/exports`, { method: "GET" });
+}
+
+export async function getEmployerJobExportDetail(jobId: string, exportId: string) {
+  return request<{
+    ok: true;
+    export: JobCandidateExportDetail["export"];
+    items: JobCandidateExportDetail["items"];
+  }>(`/employer/jobs/${jobId}/exports/${exportId}`, { method: "GET" });
 }

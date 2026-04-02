@@ -64,7 +64,9 @@ export type EvaluationRuntimeOptions = {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DEFAULT_DATASET_PATH = path.resolve(__dirname, "data/starter-dataset.json");
+const DIST_DATASET_PATH = path.resolve(__dirname, "data/starter-dataset.json");
+const SOURCE_DATASET_PATH = path.resolve(process.cwd(), "src/matching/eval/data/starter-dataset.json");
+const DEFAULT_DATASET_PATH = fs.existsSync(DIST_DATASET_PATH) ? DIST_DATASET_PATH : SOURCE_DATASET_PATH;
 
 function getArgValue(args: string[], key: string) {
   const idx = args.findIndex((arg) => arg === key);
@@ -111,7 +113,8 @@ function rankCandidates(
         scoringConfig,
         {
           embeddingSimilarity: useEmbeddingSimulation ? candidate.embeddingSimilarity ?? null : null,
-          embeddingModelVersion: options.embeddingModelVersion ?? null
+          embeddingModelVersion: options.embeddingModelVersion ?? null,
+          semanticFallbackMode: useEmbeddingSimulation ? "rule_only" : "structured"
         }
       );
 

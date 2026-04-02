@@ -63,6 +63,12 @@ export const personaScopeEnum = pgEnum("persona_scope", [
   "technical",
   "culture"
 ]);
+export const embeddingStatusEnum = pgEnum("embedding_status", [
+  "pending",
+  "processing",
+  "completed",
+  "failed"
+]);
 export const employmentTypeEnum = pgEnum("employment_type", [
   "full_time",
   "part_time",
@@ -102,6 +108,12 @@ export const matchRunStatusEnum = pgEnum("match_run_status", [
   "running",
   "completed",
   "failed"
+]);
+export const exportStatusEnum = pgEnum("export_status", ["pending", "exported", "failed"]);
+export const asyncDeadLetterStatusEnum = pgEnum("async_dead_letter_status", [
+  "failed",
+  "replayed",
+  "resolved"
 ]);
 
 export const users = pgTable(
@@ -347,6 +359,17 @@ export const veteranPersonas = pgTable(
     technicalProfile: text("technical_profile"),
     suggestedJobTitles: jsonb("suggested_job_titles"),
     modelVersion: text("model_version"),
+    embeddingStatus: embeddingStatusEnum("embedding_status").notNull().default("pending"),
+    embeddingError: text("embedding_error"),
+    embeddingErrorType: text("embedding_error_type"),
+    embeddingQueuedAt: timestamp("embedding_queued_at", { withTimezone: true }),
+    embeddingStartedAt: timestamp("embedding_started_at", { withTimezone: true }),
+    embeddingCompletedAt: timestamp("embedding_completed_at", { withTimezone: true }),
+    embeddingFailedAt: timestamp("embedding_failed_at", { withTimezone: true }),
+    embeddingLastRetriedAt: timestamp("embedding_last_retried_at", { withTimezone: true }),
+    embeddingDurationMs: integer("embedding_duration_ms"),
+    embeddingAttempts: integer("embedding_attempts").notNull().default(0),
+    embeddingRetryCount: integer("embedding_retry_count").notNull().default(0),
     embeddingModelVersion: text("embedding_model_version"),
     sourceSnapshotHash: text("source_snapshot_hash"),
     embeddedAt: timestamp("embedded_at", { withTimezone: true }),
@@ -361,7 +384,22 @@ export const veteranPersonas = pgTable(
       table.scope
     ),
     veteranPersonasProfileIdx: index("idx_veteran_personas_profile_id").on(table.veteranProfileId),
-    veteranPersonasScopeIdx: index("idx_veteran_personas_scope").on(table.scope)
+    veteranPersonasScopeIdx: index("idx_veteran_personas_scope").on(table.scope),
+    veteranPersonasEmbeddingStatusIdx: index("idx_veteran_personas_embedding_status").on(
+      table.embeddingStatus
+    ),
+    veteranPersonasEmbeddingDurationNonNegative: check(
+      "veteran_personas_embedding_duration_nonnegative",
+      sql`${table.embeddingDurationMs} IS NULL OR ${table.embeddingDurationMs} >= 0`
+    ),
+    veteranPersonasEmbeddingAttemptsNonNegative: check(
+      "veteran_personas_embedding_attempts_nonnegative",
+      sql`${table.embeddingAttempts} >= 0`
+    ),
+    veteranPersonasEmbeddingRetryCountNonNegative: check(
+      "veteran_personas_embedding_retry_count_nonnegative",
+      sql`${table.embeddingRetryCount} >= 0`
+    )
   })
 );
 
@@ -382,6 +420,16 @@ export const veteranDocuments = pgTable(
     parseStatus: resumeParseStatusEnum("parse_status").notNull().default("pending"),
     parseConfidence: numeric("parse_confidence", { precision: 4, scale: 3 }),
     parseError: text("parse_error"),
+    parseErrorType: text("parse_error_type"),
+    parseErrorStack: text("parse_error_stack"),
+    parseQueuedAt: timestamp("parse_queued_at", { withTimezone: true }),
+    parseStartedAt: timestamp("parse_started_at", { withTimezone: true }),
+    parseCompletedAt: timestamp("parse_completed_at", { withTimezone: true }),
+    parseFailedAt: timestamp("parse_failed_at", { withTimezone: true }),
+    parseLastRetriedAt: timestamp("parse_last_retried_at", { withTimezone: true }),
+    parseDurationMs: integer("parse_duration_ms"),
+    parseAttempts: integer("parse_attempts").notNull().default(0),
+    parseRetryCount: integer("parse_retry_count").notNull().default(0),
     parsedData: jsonb("parsed_data"),
     uploadedByUserId: uuid("uploaded_by_user_id").references(() => users.id, {
       onDelete: "set null"
@@ -405,6 +453,18 @@ export const veteranDocuments = pgTable(
     parseConfidenceBounds: check(
       "veteran_documents_parse_confidence_bounds",
       sql`${table.parseConfidence} IS NULL OR (${table.parseConfidence} >= 0 AND ${table.parseConfidence} <= 1)`
+    ),
+    parseDurationNonNegative: check(
+      "veteran_documents_parse_duration_nonnegative",
+      sql`${table.parseDurationMs} IS NULL OR ${table.parseDurationMs} >= 0`
+    ),
+    parseAttemptsNonNegative: check(
+      "veteran_documents_parse_attempts_nonnegative",
+      sql`${table.parseAttempts} >= 0`
+    ),
+    parseRetryCountNonNegative: check(
+      "veteran_documents_parse_retry_count_nonnegative",
+      sql`${table.parseRetryCount} >= 0`
     )
   })
 );
@@ -480,6 +540,17 @@ export const jobPersonas = pgTable(
     disqualifiers: jsonb("disqualifiers"),
     suggestedRoleFamily: text("suggested_role_family"),
     modelVersion: text("model_version"),
+    embeddingStatus: embeddingStatusEnum("embedding_status").notNull().default("pending"),
+    embeddingError: text("embedding_error"),
+    embeddingErrorType: text("embedding_error_type"),
+    embeddingQueuedAt: timestamp("embedding_queued_at", { withTimezone: true }),
+    embeddingStartedAt: timestamp("embedding_started_at", { withTimezone: true }),
+    embeddingCompletedAt: timestamp("embedding_completed_at", { withTimezone: true }),
+    embeddingFailedAt: timestamp("embedding_failed_at", { withTimezone: true }),
+    embeddingLastRetriedAt: timestamp("embedding_last_retried_at", { withTimezone: true }),
+    embeddingDurationMs: integer("embedding_duration_ms"),
+    embeddingAttempts: integer("embedding_attempts").notNull().default(0),
+    embeddingRetryCount: integer("embedding_retry_count").notNull().default(0),
     embeddingModelVersion: text("embedding_model_version"),
     sourceSnapshotHash: text("source_snapshot_hash"),
     embeddedAt: timestamp("embedded_at", { withTimezone: true }),
@@ -490,7 +561,22 @@ export const jobPersonas = pgTable(
   (table) => ({
     jobPersonaScopeUnique: unique("job_persona_scope_unique").on(table.jobId, table.scope),
     jobPersonasJobIdx: index("idx_job_personas_job_id").on(table.jobId),
-    jobPersonasScopeIdx: index("idx_job_personas_scope").on(table.scope)
+    jobPersonasScopeIdx: index("idx_job_personas_scope").on(table.scope),
+    jobPersonasEmbeddingStatusIdx: index("idx_job_personas_embedding_status").on(
+      table.embeddingStatus
+    ),
+    jobPersonasEmbeddingDurationNonNegative: check(
+      "job_personas_embedding_duration_nonnegative",
+      sql`${table.embeddingDurationMs} IS NULL OR ${table.embeddingDurationMs} >= 0`
+    ),
+    jobPersonasEmbeddingAttemptsNonNegative: check(
+      "job_personas_embedding_attempts_nonnegative",
+      sql`${table.embeddingAttempts} >= 0`
+    ),
+    jobPersonasEmbeddingRetryCountNonNegative: check(
+      "job_personas_embedding_retry_count_nonnegative",
+      sql`${table.embeddingRetryCount} >= 0`
+    )
   })
 );
 
@@ -555,6 +641,83 @@ export const applicationEvents = pgTable(
   })
 );
 
+export const jobCandidateExports = pgTable(
+  "job_candidate_exports",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => jobs.id, { onDelete: "cascade" }),
+    exportStatus: exportStatusEnum("export_status").notNull().default("pending"),
+    exportTarget: text("export_target").notNull().default("manual_handoff"),
+    exportFormat: text("export_format").notNull().default("json"),
+    requestFingerprint: text("request_fingerprint"),
+    externalSource: text("external_source"),
+    externalId: text("external_id"),
+    exportedByUserId: uuid("exported_by_user_id").references(() => users.id, {
+      onDelete: "set null"
+    }),
+    candidateCount: integer("candidate_count").notNull().default(0),
+    payload: jsonb("payload"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    exportedAt: timestamp("exported_at", { withTimezone: true })
+  },
+  (table) => ({
+    jobCandidateExportsJobIdx: index("idx_job_candidate_exports_job_id").on(table.jobId),
+    jobCandidateExportsStatusIdx: index("idx_job_candidate_exports_status").on(table.exportStatus),
+    jobCandidateExportsByUserIdx: index("idx_job_candidate_exports_exported_by_user_id").on(
+      table.exportedByUserId
+    ),
+    jobCandidateExportsFingerprintIdx: index("idx_job_candidate_exports_request_fingerprint").on(
+      table.requestFingerprint
+    )
+  })
+);
+
+export const jobCandidateExportItems = pgTable(
+  "job_candidate_export_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    exportId: uuid("export_id")
+      .notNull()
+      .references(() => jobCandidateExports.id, { onDelete: "cascade" }),
+    veteranProfileId: uuid("veteran_profile_id")
+      .notNull()
+      .references(() => veteranProfiles.id, { onDelete: "cascade" }),
+    applicationId: uuid("application_id").references(() => applications.id, { onDelete: "set null" }),
+    matchRunId: uuid("match_run_id"),
+    matchScore: numeric("match_score", { precision: 7, scale: 6 }),
+    rank: integer("rank"),
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    jobCandidateExportItemsExportIdx: index("idx_job_candidate_export_items_export_id").on(table.exportId),
+    jobCandidateExportItemsVeteranIdx: index("idx_job_candidate_export_items_veteran_profile_id").on(
+      table.veteranProfileId
+    ),
+    jobCandidateExportItemsApplicationIdx: index("idx_job_candidate_export_items_application_id").on(
+      table.applicationId
+    ),
+    jobCandidateExportItemsRunIdx: index("idx_job_candidate_export_items_match_run_id").on(
+      table.matchRunId
+    ),
+    jobCandidateExportItemsUnique: unique("job_candidate_export_items_unique").on(
+      table.exportId,
+      table.veteranProfileId
+    ),
+    rankPositive: check(
+      "job_candidate_export_items_rank_positive",
+      sql`${table.rank} IS NULL OR ${table.rank} > 0`
+    ),
+    matchScoreBounds: check(
+      "job_candidate_export_items_match_score_bounds",
+      sql`${table.matchScore} IS NULL OR (${table.matchScore} >= 0 AND ${table.matchScore} <= 1)`
+    )
+  })
+);
+
 export const matchRuns = pgTable(
   "match_runs",
   {
@@ -567,6 +730,7 @@ export const matchRuns = pgTable(
     scoreVersion: text("score_version").notNull().default("v1"),
     explanationVersion: text("explanation_version").notNull().default("v1"),
     status: matchRunStatusEnum("status").notNull().default("queued"),
+    queuedAt: timestamp("queued_at", { withTimezone: true }),
     inputFingerprint: text("input_fingerprint"),
     sourceSnapshotHash: text("source_snapshot_hash"),
     requestedByUserId: uuid("requested_by_user_id").references(() => users.id, {
@@ -576,6 +740,12 @@ export const matchRuns = pgTable(
     completedAt: timestamp("completed_at", { withTimezone: true }),
     failedAt: timestamp("failed_at", { withTimezone: true }),
     errorMessage: text("error_message"),
+    errorType: text("error_type"),
+    errorStack: text("error_stack"),
+    lastRetriedAt: timestamp("last_retried_at", { withTimezone: true }),
+    durationMs: integer("duration_ms"),
+    attempts: integer("attempts").notNull().default(0),
+    retryCount: integer("retry_count").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
   },
   (table) => ({
@@ -583,7 +753,68 @@ export const matchRuns = pgTable(
     matchRunsFingerprintIdx: index("idx_match_runs_input_fingerprint").on(table.inputFingerprint),
     matchRunsStatusIdx: index("idx_match_runs_status").on(table.status),
     matchRunsRequestedByIdx: index("idx_match_runs_requested_by_user_id").on(table.requestedByUserId),
-    matchRunsJobIdx: index("idx_match_runs_job_id").on(table.jobId)
+    matchRunsJobIdx: index("idx_match_runs_job_id").on(table.jobId),
+    durationNonNegative: check(
+      "match_runs_duration_nonnegative",
+      sql`${table.durationMs} IS NULL OR ${table.durationMs} >= 0`
+    ),
+    attemptsNonNegative: check(
+      "match_runs_attempts_nonnegative",
+      sql`${table.attempts} >= 0`
+    ),
+    retryCountNonNegative: check(
+      "match_runs_retry_count_nonnegative",
+      sql`${table.retryCount} >= 0`
+    )
+  })
+);
+
+export const asyncJobDeadLetters = pgTable(
+  "async_job_dead_letters",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    queueName: text("queue_name").notNull(),
+    jobName: text("job_name").notNull(),
+    bullmqJobId: text("bullmq_job_id").notNull(),
+    idempotencyKey: text("idempotency_key"),
+    payload: jsonb("payload"),
+    failureStatus: asyncDeadLetterStatusEnum("failure_status").notNull().default("failed"),
+    errorType: text("error_type").notNull(),
+    errorMessage: text("error_message").notNull(),
+    errorStack: text("error_stack"),
+    attemptsMade: integer("attempts_made").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(1),
+    failedAt: timestamp("failed_at", { withTimezone: true }).notNull().defaultNow(),
+    replayCount: integer("replay_count").notNull().default(0),
+    lastReplayAt: timestamp("last_replay_at", { withTimezone: true }),
+    lastReplayByUserId: uuid("last_replay_by_user_id").references(() => users.id, {
+      onDelete: "set null"
+    }),
+    lastReplayJobId: text("last_replay_job_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    asyncJobDeadLettersQueueIdx: index("idx_async_job_dead_letters_queue_name").on(table.queueName),
+    asyncJobDeadLettersStatusIdx: index("idx_async_job_dead_letters_failure_status").on(
+      table.failureStatus
+    ),
+    asyncJobDeadLettersFailedAtIdx: index("idx_async_job_dead_letters_failed_at").on(table.failedAt),
+    asyncJobDeadLettersReplayByIdx: index("idx_async_job_dead_letters_last_replay_by").on(
+      table.lastReplayByUserId
+    ),
+    asyncJobDeadLettersBullmqUnique: unique("async_job_dead_letters_bullmq_unique").on(
+      table.queueName,
+      table.bullmqJobId
+    ),
+    asyncJobDeadLettersAttemptsNonNegative: check(
+      "async_job_dead_letters_attempts_nonnegative",
+      sql`${table.attemptsMade} >= 0 AND ${table.maxAttempts} >= 1`
+    ),
+    asyncJobDeadLettersReplayCountNonNegative: check(
+      "async_job_dead_letters_replay_count_nonnegative",
+      sql`${table.replayCount} >= 0`
+    )
   })
 );
 

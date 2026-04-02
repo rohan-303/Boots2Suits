@@ -5,6 +5,14 @@
   "embeddingModelVersion": "structured-placeholder-v1",
   "rerankerVersion": "none",
   "calibrationVersion": "manual-candidate-001",
+  "hybridWeights": {
+    "semantic": 0.65,
+    "rule": 0.35
+  },
+  "semanticBlendWeights": {
+    "embedding": 0.85,
+    "structured": 0.15
+  },
   "weights": {
     "skillSimilarity": 0.4,
     "personaFit": 0.25,

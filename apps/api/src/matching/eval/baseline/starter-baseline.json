@@ -1,0 +1,24 @@
+{
+  "name": "starter-baseline-v1",
+  "datasetPath": "src/matching/eval/data/starter-dataset.json",
+  "embeddingMode": "structured_fallback",
+  "embeddingModelVersion": "structured-fallback-v1",
+  "minimumThresholds": {
+    "top1Accuracy": 0.5,
+    "top3InclusionRate": 1,
+    "meanReciprocalRank": 0.6,
+    "explanationSignalPassRate": 0.5
+  },
+  "lockedMetrics": {
+    "top1Accuracy": 1,
+    "top3InclusionRate": 1,
+    "meanReciprocalRank": 1,
+    "explanationSignalPassRate": 0.6
+  },
+  "maxAllowedDegradation": {
+    "top1Accuracy": 0.05,
+    "top3InclusionRate": 0.05,
+    "meanReciprocalRank": 0.05,
+    "explanationSignalPassRate": 0.05
+  }
+}

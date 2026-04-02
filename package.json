@@ -16,7 +16,12 @@
     "db:seed": "npm run db:seed --workspace @boots2suits/db",
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:watch": "npm run test:watch --workspace @boots2suits/api",
+    "ci:check": "npm run typecheck && npm run lint && npm run test && npm run match:quality-gate --workspace @boots2suits/api",
+    "logs:dev": "node scripts/pretty-logs.mjs",
+    "queue:inspect": "npm run queue:inspect --workspace @boots2suits/api"
   },
   "dependencies": {
     "pg": "^8.20.0"

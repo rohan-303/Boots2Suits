@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { and, eq } from "drizzle-orm";
 import { PDFParse } from "pdf-parse";
+import { NonRetryableJobError, isRetryableErrorType, normalizeError } from "@boots2suits/shared";
 import { createDbClient, veteranDocuments, veteranProfiles } from "@boots2suits/db";
 
 type Db = ReturnType<typeof createDbClient>["db"];
@@ -201,14 +202,16 @@ function parseResumeText(rawText: string): ParsedResume {
 
 export async function processResumeParsingJob(
   db: Db,
-  payload: { documentId: string; veteranProfileId: string }
+  payload: { documentId: string; veteranProfileId: string },
+  context: { attemptNumber: number; maxAttempts: number; startedAt: number }
 ) {
   const [document] = await db
     .select({
       id: veteranDocuments.id,
       veteranProfileId: veteranDocuments.veteranProfileId,
       storagePath: veteranDocuments.storagePath,
-      parseStatus: veteranDocuments.parseStatus
+      parseStatus: veteranDocuments.parseStatus,
+      parseAttempts: veteranDocuments.parseAttempts
     })
     .from(veteranDocuments)
     .where(
@@ -227,12 +230,19 @@ export async function processResumeParsingJob(
   if (document.parseStatus === "completed") {
     return;
   }
+  const nextAttempt = (document.parseAttempts ?? 0) + 1;
 
   await db
     .update(veteranDocuments)
     .set({
       parseStatus: "processing",
-      parseError: null
+      parseError: null,
+      parseErrorType: null,
+      parseErrorStack: null,
+      parseStartedAt: new Date(),
+      parseAttempts: nextAttempt,
+      parseRetryCount: Math.max(0, nextAttempt - 1),
+      parseLastRetriedAt: nextAttempt > 1 ? new Date() : null
     })
     .where(eq(veteranDocuments.id, document.id));
 
@@ -284,18 +294,55 @@ export async function processResumeParsingJob(
           skills: parsed.skills
         },
         parseError: null,
-        parsedAt: now
+        parseErrorType: null,
+        parseErrorStack: null,
+        parsedAt: now,
+        parseCompletedAt: now,
+        parseDurationMs: Date.now() - context.startedAt,
+        parseAttempts: nextAttempt,
+        parseRetryCount: Math.max(0, nextAttempt - 1)
       })
       .where(eq(veteranDocuments.id, document.id));
   } catch (error) {
+    const normalized = normalizeError(error);
+    const retryable = isRetryableErrorType(normalized.errorType);
+    const isFinalAttempt = !retryable || context.attemptNumber >= context.maxAttempts;
+    const failureUpdate: {
+      parseStatus: "failed" | "pending";
+      parseError: string;
+      parseErrorType: string;
+      parseErrorStack: string | null;
+      parsedAt: Date;
+      parseFailedAt: Date;
+      parseDurationMs: number;
+      parseAttempts: number;
+      parseRetryCount: number;
+      parseLastRetriedAt: Date | null;
+      parseQueuedAt?: Date;
+    } = {
+      parseStatus: isFinalAttempt ? "failed" : "pending",
+      parseError: normalized.errorMessage,
+      parseErrorType: normalized.errorType,
+      parseErrorStack: normalized.errorStack,
+      parsedAt: new Date(),
+      parseFailedAt: new Date(),
+      parseDurationMs: Date.now() - context.startedAt,
+      parseAttempts: nextAttempt,
+      parseRetryCount: Math.max(0, nextAttempt - 1),
+      parseLastRetriedAt: nextAttempt > 1 ? new Date() : null
+    };
+    if (retryable && !isFinalAttempt) {
+      failureUpdate.parseQueuedAt = new Date();
+    }
+
     await db
       .update(veteranDocuments)
-      .set({
-        parseStatus: "failed",
-        parseError: error instanceof Error ? error.message : "Resume parsing failed.",
-        parsedAt: new Date()
-      })
+      .set(failureUpdate)
       .where(eq(veteranDocuments.id, document.id));
+
+    if (!retryable) {
+      throw new NonRetryableJobError(normalized.errorMessage, normalized.errorType);
+    }
 
     throw error;
   }

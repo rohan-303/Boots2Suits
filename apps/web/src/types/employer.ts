@@ -66,3 +66,35 @@ export type JobPersona = {
   sourceSnapshotHash: string | null;
   updatedAt?: string;
 };
+
+export type JobCandidateExportSummary = {
+  id: string;
+  exportStatus: "pending" | "exported" | "failed";
+  exportTarget: string;
+  exportFormat: "json" | "csv" | string;
+  externalSource: string | null;
+  externalId: string | null;
+  candidateCount: number;
+  exportedByUserId: string | null;
+  createdAt: string;
+  exportedAt: string | null;
+  errorMessage: string | null;
+};
+
+export type JobCandidateExportItem = {
+  veteranProfileId: string;
+  applicationId: string | null;
+  matchRunId: string | null;
+  matchScore: number | null;
+  rank: number | null;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type JobCandidateExportDetail = {
+  export: JobCandidateExportSummary & {
+    payload: Record<string, unknown> | null;
+    jobId: string;
+  };
+  items: JobCandidateExportItem[];
+};

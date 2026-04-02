@@ -19,8 +19,26 @@ export type MatchingScoringConfig = {
   embeddingModelVersion: string;
   rerankerVersion: string;
   calibrationVersion: string;
+  hybridWeights: {
+    semantic: number;
+    rule: number;
+  };
+  semanticBlendWeights: {
+    embedding: number;
+    structured: number;
+  };
   weights: Record<MatchFeatureKey, number>;
 };
+
+const hybridWeightsSchema = z.object({
+  semantic: z.number().min(0).max(1),
+  rule: z.number().min(0).max(1)
+});
+
+const semanticBlendWeightsSchema = z.object({
+  embedding: z.number().min(0).max(1),
+  structured: z.number().min(0).max(1)
+});
 
 const weightSchema = z.object({
   skillSimilarity: z.number().min(0).max(1),
@@ -39,6 +57,8 @@ const configSchema = z.object({
   embeddingModelVersion: z.string().min(1),
   rerankerVersion: z.string().min(1),
   calibrationVersion: z.string().min(1),
+  hybridWeights: hybridWeightsSchema,
+  semanticBlendWeights: semanticBlendWeightsSchema,
   weights: weightSchema
 });
 
@@ -49,6 +69,14 @@ export const defaultScoringConfig: MatchingScoringConfig = {
   embeddingModelVersion: "structured-fallback-v1",
   rerankerVersion: "none",
   calibrationVersion: "none",
+  hybridWeights: {
+    semantic: 0.6,
+    rule: 0.4
+  },
+  semanticBlendWeights: {
+    embedding: 0.8,
+    structured: 0.2
+  },
   weights: {
     skillSimilarity: 0.35,
     personaFit: 0.2,
@@ -66,6 +94,18 @@ export function validateScoringConfig(config: unknown): MatchingScoringConfig {
   if (Math.abs(totalWeight - 1) > 0.0001) {
     throw new Error(
       `Invalid scoring config: weights must sum to 1.0, received ${totalWeight.toFixed(6)}`
+    );
+  }
+  const hybridTotal = parsed.hybridWeights.semantic + parsed.hybridWeights.rule;
+  if (Math.abs(hybridTotal - 1) > 0.0001) {
+    throw new Error(
+      `Invalid scoring config: hybridWeights must sum to 1.0, received ${hybridTotal.toFixed(6)}`
+    );
+  }
+  const semanticBlendTotal = parsed.semanticBlendWeights.embedding + parsed.semanticBlendWeights.structured;
+  if (Math.abs(semanticBlendTotal - 1) > 0.0001) {
+    throw new Error(
+      `Invalid scoring config: semanticBlendWeights must sum to 1.0, received ${semanticBlendTotal.toFixed(6)}`
     );
   }
   return parsed;

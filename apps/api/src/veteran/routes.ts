@@ -7,6 +7,7 @@ import {
   veteranPersonas,
   veteranProfiles
 } from "@boots2suits/db";
+import { apiLogger } from "@boots2suits/shared";
 import multer from "multer";
 import path from "node:path";
 import fs from "node:fs";
@@ -197,6 +198,11 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
         technicalProfile: veteranPersonas.technicalProfile,
         suggestedJobTitles: veteranPersonas.suggestedJobTitles,
         modelVersion: veteranPersonas.modelVersion,
+        embeddingStatus: veteranPersonas.embeddingStatus,
+        embeddingError: veteranPersonas.embeddingError,
+        embeddingQueuedAt: veteranPersonas.embeddingQueuedAt,
+        embeddingAttempts: veteranPersonas.embeddingAttempts,
+        embeddingRetryCount: veteranPersonas.embeddingRetryCount,
         embeddingModelVersion: veteranPersonas.embeddingModelVersion,
         sourceSnapshotHash: veteranPersonas.sourceSnapshotHash,
         updatedAt: veteranPersonas.updatedAt
@@ -327,8 +333,14 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
       if (!authUser) {
         return res.status(401).json({ ok: false, error: "Authentication required." });
       }
+      const log = apiLogger.timed("veteran.resume.upload", {
+        action: "resume_upload",
+        route: "POST /veteran/resume/upload",
+        userId: authUser.id
+      });
 
       if (!req.file) {
+        log.fail(new Error("Resume file is required."));
         return res.status(400).json({ ok: false, error: "Resume file is required." });
       }
 
@@ -341,6 +353,7 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
         .limit(1);
 
       if (!profile) {
+        log.fail(new Error("Veteran profile missing before resume upload."));
         return res.status(400).json({
           ok: false,
           error: "Complete veteran onboarding profile before uploading a resume."
@@ -375,6 +388,17 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
           storagePath: req.file.path,
           parseStatus: "pending",
           parserVersion: "pdf-parse-v1",
+          parseQueuedAt: now,
+          parseStartedAt: null,
+          parseCompletedAt: null,
+          parseFailedAt: null,
+          parseLastRetriedAt: null,
+          parseDurationMs: null,
+          parseAttempts: 0,
+          parseRetryCount: 0,
+          parseError: null,
+          parseErrorType: null,
+          parseErrorStack: null,
           uploadedByUserId: authUser.id,
           uploadedAt: now
         })
@@ -393,6 +417,14 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
       await enqueueResumeParsingJob(env.REDIS_URL, {
         documentId: createdDoc.id,
         veteranProfileId: profile.id
+      }, {
+        attempts: env.QUEUE_RESUME_JOB_ATTEMPTS ?? env.QUEUE_JOB_ATTEMPTS,
+        backoffMs: env.QUEUE_RESUME_JOB_BACKOFF_MS ?? env.QUEUE_JOB_BACKOFF_MS
+      });
+
+      log.success({
+        status: "success",
+        jobId: createdDoc.id
       });
 
       return res.status(202).json({
@@ -419,6 +451,12 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
     if (!profile) {
       return res.status(404).json({ ok: false, error: "Veteran profile not found." });
     }
+    const log = apiLogger.timed("veteran.resume.reparse", {
+      action: "resume_reparse",
+      route: "POST /veteran/resume/:documentId/parse",
+      userId: authUser.id,
+      jobId: req.params.documentId
+    });
 
     const [document] = await options.db
       .select({
@@ -437,10 +475,12 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
       .limit(1);
 
     if (!document) {
+      log.fail(new Error("Active resume document not found."));
       return res.status(404).json({ ok: false, error: "Active resume document not found." });
     }
 
-    if (document.parseStatus === "processing") {
+    if (document.parseStatus === "processing" || document.parseStatus === "pending") {
+      log.fail(new Error("Resume parsing already in progress."));
       return res.status(409).json({ ok: false, error: "Resume parsing is already in progress." });
     }
 
@@ -449,14 +489,31 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
       .set({
         parseStatus: "pending",
         parseError: null,
+        parseErrorType: null,
+        parseErrorStack: null,
         parseConfidence: null,
-        parsedAt: null
+        parsedAt: null,
+        parseQueuedAt: new Date(),
+        parseStartedAt: null,
+        parseCompletedAt: null,
+        parseFailedAt: null,
+        parseLastRetriedAt: null,
+        parseDurationMs: null,
+        parseAttempts: 0,
+        parseRetryCount: 0
       })
       .where(eq(veteranDocuments.id, document.id));
 
     await enqueueResumeParsingJob(env.REDIS_URL, {
       documentId: document.id,
       veteranProfileId: profile.id
+    }, {
+      attempts: env.QUEUE_RESUME_JOB_ATTEMPTS ?? env.QUEUE_JOB_ATTEMPTS,
+      backoffMs: env.QUEUE_RESUME_JOB_BACKOFF_MS ?? env.QUEUE_JOB_BACKOFF_MS
+    });
+
+    log.success({
+      status: "success"
     });
 
     return res.status(202).json({
@@ -563,6 +620,24 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
     });
 
     const now = new Date();
+    const [existingPersona] = await options.db
+      .select({
+        id: veteranPersonas.id,
+        sourceSnapshotHash: veteranPersonas.sourceSnapshotHash,
+        embeddingStatus: veteranPersonas.embeddingStatus,
+        embeddingError: veteranPersonas.embeddingError,
+        embeddingQueuedAt: veteranPersonas.embeddingQueuedAt,
+        embeddingStartedAt: veteranPersonas.embeddingStartedAt,
+        embeddingFailedAt: veteranPersonas.embeddingFailedAt,
+        embeddingAttempts: veteranPersonas.embeddingAttempts,
+        embeddingRetryCount: veteranPersonas.embeddingRetryCount,
+        embeddingModelVersion: veteranPersonas.embeddingModelVersion
+      })
+      .from(veteranPersonas)
+      .where(and(eq(veteranPersonas.veteranProfileId, profile.id), eq(veteranPersonas.scope, "overall")))
+      .limit(1);
+    const shouldRefreshEmbedding =
+      !existingPersona || existingPersona.sourceSnapshotHash !== persona.sourceSnapshotHash;
 
     const [savedPersona] = await options.db
       .insert(veteranPersonas)
@@ -577,6 +652,22 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
         technicalProfile: persona.technicalProfile,
         suggestedJobTitles: persona.suggestedJobTitles,
         modelVersion: persona.modelVersion,
+        embeddingStatus: shouldRefreshEmbedding
+          ? "pending"
+          : (existingPersona?.embeddingStatus ?? "pending"),
+        embeddingError: shouldRefreshEmbedding ? null : (existingPersona?.embeddingError ?? null),
+        embeddingQueuedAt: shouldRefreshEmbedding ? now : (existingPersona?.embeddingQueuedAt ?? now),
+        embeddingStartedAt: shouldRefreshEmbedding ? null : (existingPersona?.embeddingStartedAt ?? null),
+        embeddingFailedAt: shouldRefreshEmbedding ? null : (existingPersona?.embeddingFailedAt ?? null),
+        embeddingAttempts: shouldRefreshEmbedding
+          ? 0
+          : (existingPersona?.embeddingAttempts ?? 0),
+        embeddingRetryCount: shouldRefreshEmbedding
+          ? 0
+          : (existingPersona?.embeddingRetryCount ?? 0),
+        embeddingModelVersion: shouldRefreshEmbedding
+          ? null
+          : (existingPersona?.embeddingModelVersion ?? null),
         sourceSnapshotHash: persona.sourceSnapshotHash,
         updatedAt: now
       })
@@ -591,6 +682,28 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
           technicalProfile: persona.technicalProfile,
           suggestedJobTitles: persona.suggestedJobTitles,
           modelVersion: persona.modelVersion,
+          embeddingStatus: shouldRefreshEmbedding
+            ? "pending"
+            : (existingPersona?.embeddingStatus ?? "pending"),
+          embeddingError: shouldRefreshEmbedding ? null : (existingPersona?.embeddingError ?? null),
+          embeddingQueuedAt: shouldRefreshEmbedding
+            ? now
+            : (existingPersona?.embeddingQueuedAt ?? now),
+          embeddingStartedAt: shouldRefreshEmbedding
+            ? null
+            : (existingPersona?.embeddingStartedAt ?? null),
+          embeddingFailedAt: shouldRefreshEmbedding
+            ? null
+            : (existingPersona?.embeddingFailedAt ?? null),
+          embeddingAttempts: shouldRefreshEmbedding
+            ? 0
+            : (existingPersona?.embeddingAttempts ?? 0),
+          embeddingRetryCount: shouldRefreshEmbedding
+            ? 0
+            : (existingPersona?.embeddingRetryCount ?? 0),
+          embeddingModelVersion: shouldRefreshEmbedding
+            ? null
+            : (existingPersona?.embeddingModelVersion ?? null),
           sourceSnapshotHash: persona.sourceSnapshotHash,
           updatedAt: now
         }
@@ -601,16 +714,35 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
       });
 
     let embeddingEnqueued = false;
-    if (savedPersona?.sourceSnapshotHash) {
+    if (!shouldRefreshEmbedding) {
+      embeddingEnqueued = false;
+    } else if (!env.EMBEDDINGS_ENABLED) {
+      await options.db
+        .update(veteranPersonas)
+        .set({
+          embeddingStatus: "failed",
+          embeddingError: "Embeddings disabled by configuration."
+        })
+        .where(eq(veteranPersonas.id, savedPersona.id));
+    } else if (savedPersona?.sourceSnapshotHash) {
       try {
         await enqueueEmbeddingGenerationJob(env.REDIS_URL, {
           targetType: "veteran_persona",
           targetId: savedPersona.id,
           sourceSnapshotHash: savedPersona.sourceSnapshotHash
+        }, {
+          attempts: env.QUEUE_EMBEDDING_JOB_ATTEMPTS ?? env.QUEUE_JOB_ATTEMPTS,
+          backoffMs: env.QUEUE_EMBEDDING_JOB_BACKOFF_MS ?? env.QUEUE_JOB_BACKOFF_MS
         });
         embeddingEnqueued = true;
       } catch (error) {
-        console.error("Failed to enqueue veteran persona embedding generation.", error);
+        apiLogger.error("queue.job.enqueue", error, {
+          action: "enqueue_veteran_embedding",
+          route: "POST /veteran/persona/generate",
+          userId: authUser.id,
+          jobId: savedPersona.id,
+          status: "fail"
+        });
       }
     }
 
@@ -627,6 +759,11 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
         technicalProfile: persona.technicalProfile,
         suggestedJobTitles: persona.suggestedJobTitles,
         modelVersion: persona.modelVersion,
+        embeddingStatus: shouldRefreshEmbedding
+          ? env.EMBEDDINGS_ENABLED
+            ? "pending"
+            : "failed"
+          : (existingPersona?.embeddingStatus ?? "completed"),
         sourceSnapshotHash: persona.sourceSnapshotHash
       }
     });

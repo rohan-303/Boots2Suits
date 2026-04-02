@@ -45,6 +45,10 @@ This schema supports the MVP-critical data model for:
   - overall persona supports structured outputs: strengths, role clusters,
     experience level, leadership/technical profiles, suggested job titles,
     model version, embedding model version, source snapshot hash, and embedding timestamp
+  - embedding async lifecycle: `embedding_status`, `embedding_error`,
+    `embedding_queued_at`, `embedding_started_at`, `embedding_completed_at`, `embedding_failed_at`,
+    `embedding_attempts`, `embedding_retry_count`, `embedding_last_retried_at`,
+    `embedding_error_type`, `embedding_duration_ms`
 - `jobs`
   - job posting + ATS sync fields
   - structured posting fields for persona-ready modeling:
@@ -57,17 +61,30 @@ This schema supports the MVP-critical data model for:
     `technical_depth`, `suggested_candidate_archetypes`, `priority_signals`,
     `disqualifiers`, `suggested_role_family`, `model_version`,
     `embedding_model_version`, `source_snapshot_hash`
+  - embedding async lifecycle: `embedding_status`, `embedding_error`,
+    `embedding_queued_at`, `embedding_started_at`, `embedding_completed_at`, `embedding_failed_at`,
+    `embedding_attempts`, `embedding_retry_count`, `embedding_last_retried_at`,
+    `embedding_error_type`, `embedding_duration_ms`
 - `applications`
   - current application state (no longer hard-unique by profile/job)
   - includes ATS sync fields
 - `application_events`
   - append-only lifecycle/event history for applications
+- `job_candidate_exports`
+  - recruiter handoff/export batch records by job
+  - tracks export status/target/format/fingerprint/exported_by/candidate_count/payload
+- `job_candidate_export_items`
+  - candidate-level records inside each export batch
+  - stores per-candidate handoff packet payload + match/application references
 - `match_runs`
   - scoring run provenance for replay/audit
 - `candidate_job_scores`
   - hybrid score output with run-level and row-level provenance
 - `candidate_job_score_features`
   - feature-level explanation/contribution rows per score
+- `async_job_dead_letters`
+  - terminal failure records for async jobs across queues
+  - stores queue/job IDs, payload snapshot, error metadata, attempts, and replay metadata
 
 ## Enums
 
@@ -86,7 +103,10 @@ This schema supports the MVP-critical data model for:
   - workflow foundation also supports: `drafted`, `reviewed`, `shortlisted`, `closed`
 - `application_event_type`: `created`, `status_changed`, `note`, `sync`
 - `resume_parse_status`: `pending`, `processing`, `completed`, `failed`
+- `embedding_status`: `pending`, `processing`, `completed`, `failed`
 - `match_run_status`: `queued`, `running`, `completed`, `failed`
+- `export_status`: `pending`, `exported`, `failed`
+- `async_dead_letter_status`: `failed`, `replayed`, `resolved`
 
 ## Provenance and Explainability
 
@@ -143,6 +163,10 @@ The schema enforces low-risk/high-value checks:
 - `packages/db/drizzle/0006_application_workflow_statuses.sql`
 - `packages/db/drizzle/0007_async_processing_foundation.sql`
 - `packages/db/drizzle/0008_embeddings_foundation.sql`
+- `packages/db/drizzle/0009_observability_async_lifecycle.sql`
+- `packages/db/drizzle/0010_embeddings_status_and_hybrid_foundation.sql`
+- `packages/db/drizzle/0011_ats_export_foundation.sql`
+- `packages/db/drizzle/0012_async_reliability_hardening.sql`
 - `packages/db/drizzle/meta/_journal.json`
 
 ## Commands
