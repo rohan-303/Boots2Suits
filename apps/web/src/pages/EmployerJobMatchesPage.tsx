@@ -8,11 +8,16 @@ import {
   getJobMatchResults,
   runJobMatching
 } from "../lib/api";
-import type { EmployerMatchResult } from "../types/matching";
+import type { EmployerMatchResult, MatchRunMeta } from "../types/matching";
 
 function formatScore(value: number | null) {
   if (value === null || Number.isNaN(value)) return "-";
   return `${Math.round(value * 100)}%`;
+}
+
+function runStatusLabel(run: MatchRunMeta | null) {
+  if (!run) return "not run";
+  return run.status;
 }
 
 export function EmployerJobMatchesPage() {
@@ -21,7 +26,7 @@ export function EmployerJobMatchesPage() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [jobTitle, setJobTitle] = useState<string>("");
-  const [runId, setRunId] = useState<string | null>(null);
+  const [matchRun, setMatchRun] = useState<MatchRunMeta | null>(null);
   const [results, setResults] = useState<EmployerMatchResult[]>([]);
   const [actingCandidateId, setActingCandidateId] = useState<string | null>(null);
 
@@ -36,7 +41,7 @@ export function EmployerJobMatchesPage() {
     }
 
     setJobTitle(result.data.job.title);
-    setRunId(result.data.matchRun?.id ?? null);
+    setMatchRun(result.data.matchRun);
     setResults(result.data.results);
     setLoading(false);
   }
@@ -44,6 +49,18 @@ export function EmployerJobMatchesPage() {
   useEffect(() => {
     void load();
   }, [jobId]);
+
+  useEffect(() => {
+    if (!matchRun || (matchRun.status !== "queued" && matchRun.status !== "running")) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      void load();
+    }, 3000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [jobId, matchRun?.id, matchRun?.status]);
 
   async function onRunMatching() {
     if (!jobId) return;
@@ -88,6 +105,8 @@ export function EmployerJobMatchesPage() {
     return <div className="p-6 text-sm text-slate-600">Loading match results...</div>;
   }
 
+  const runInProgress = matchRun?.status === "queued" || matchRun?.status === "running";
+
   return (
     <section className="space-y-4">
       <div className="rounded-2xl border border-slate-300/70 bg-white/85 p-6 shadow-lg">
@@ -101,25 +120,41 @@ export function EmployerJobMatchesPage() {
           <button
             type="button"
             onClick={() => void onRunMatching()}
-            disabled={running}
+            disabled={running || runInProgress}
             className="rounded bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
           >
-            {running ? "Running matching..." : "Run Matching"}
+            {running || runInProgress ? "Queueing/Running..." : "Run Matching"}
           </button>
         </div>
-        <div className="mt-3 flex gap-4 text-sm">
-          <Link className="font-semibold text-amber-700 underline" to={`/app/employer/jobs/${jobId ?? ""}`}>
+        <div className="mt-3 flex flex-wrap gap-4 text-sm">
+          <Link
+            className="font-semibold text-amber-700 underline"
+            to={`/app/employer/jobs/${jobId ?? ""}`}
+          >
             Back to Job
           </Link>
-          {runId ? <p className="text-slate-500">Latest run: {runId.slice(0, 8)}...</p> : null}
+          <p className="text-slate-500">Run status: {runStatusLabel(matchRun)}</p>
+          {matchRun ? <p className="text-slate-500">Latest run: {matchRun.id.slice(0, 8)}...</p> : null}
         </div>
+        {matchRun?.status === "failed" && matchRun.errorMessage ? (
+          <p className="mt-2 text-sm font-medium text-rose-700">
+            Last run failed: {matchRun.errorMessage}
+          </p>
+        ) : null}
+        {runInProgress ? (
+          <p className="mt-2 text-sm text-blue-700">
+            Matching is in progress. Results will refresh automatically.
+          </p>
+        ) : null}
         {error ? <p className="mt-3 text-sm font-medium text-rose-700">{error}</p> : null}
       </div>
 
       <div className="rounded-2xl border border-slate-300/70 bg-white/85 p-6 shadow-lg">
         {results.length === 0 ? (
           <p className="text-sm text-slate-600">
-            No match results yet. Run matching to generate ranked candidates for this job.
+            {runInProgress
+              ? "Matching run is in progress. Candidate rankings will appear when completed."
+              : "No match results yet. Run matching to generate ranked candidates for this job."}
           </p>
         ) : (
           <ul className="space-y-3">
@@ -131,7 +166,8 @@ export function EmployerJobMatchesPage() {
                       #{result.rank ?? "-"} {result.candidate.fullName ?? "Veteran Candidate"}
                     </p>
                     <p className="text-sm text-slate-600">
-                      {result.candidate.militaryBranch ?? "-"} {result.candidate.mosCode ? `(${result.candidate.mosCode})` : ""}
+                      {result.candidate.militaryBranch ?? "-"}{" "}
+                      {result.candidate.mosCode ? `(${result.candidate.mosCode})` : ""}
                     </p>
                     <p className="mt-1 text-sm text-slate-700">{result.candidate.personaSummary ?? "-"}</p>
                     <p className="mt-1 text-xs font-medium text-slate-500">
@@ -166,10 +202,14 @@ export function EmployerJobMatchesPage() {
                   <p className="text-sm font-semibold">Score components</p>
                   <div className="mt-1 grid gap-2 sm:grid-cols-2">
                     {result.topFeatures.map((feature) => (
-                      <div key={`${result.veteranProfileId}-${feature.featureName}`} className="rounded border border-slate-200 p-2 text-sm">
+                      <div
+                        key={`${result.veteranProfileId}-${feature.featureName}`}
+                        className="rounded border border-slate-200 p-2 text-sm"
+                      >
                         <p className="font-medium text-slate-800">{feature.featureName}</p>
                         <p className="text-slate-600">
-                          impact: {feature.featureImpact?.toFixed(3) ?? "-"} | reason: {feature.reasonCode ?? "-"}
+                          impact: {feature.featureImpact?.toFixed(3) ?? "-"} | reason:{" "}
+                          {feature.reasonCode ?? "-"}
                         </p>
                       </div>
                     ))}

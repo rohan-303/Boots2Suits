@@ -46,7 +46,7 @@ export type VeteranPersona = {
 export type VeteranResume = {
   id: string;
   originalFilename: string;
-  parseStatus: "uploaded" | "parsed" | "failed";
+  parseStatus: "pending" | "processing" | "completed" | "failed";
   parseConfidence: string | null;
   parserVersion: string | null;
   parseError: string | null;

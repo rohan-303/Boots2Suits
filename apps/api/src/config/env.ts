@@ -10,8 +10,8 @@ const envSchema = z.object({
     .default("false")
     .transform((value) => value === "true"),
   AUTH_SESSION_TTL_DAYS: z.coerce.number().int().positive().default(7),
-  AUTH_TOKEN_PEPPER: z.string().min(16, "AUTH_TOKEN_PEPPER must be at least 16 chars")
+  AUTH_TOKEN_PEPPER: z.string().min(16, "AUTH_TOKEN_PEPPER must be at least 16 chars"),
+  REDIS_URL: z.string().url().default("redis://localhost:6379")
 });
 
 export const env = envSchema.parse(process.env);
-

@@ -55,9 +55,7 @@ export function EmployerJobDetailPage() {
       setError(result.error ?? "Unable to run matching.");
       return;
     }
-    setMatchRunMessage(
-      `Matching completed for ${result.data.totalCandidatesScored} candidates.`
-    );
+    setMatchRunMessage(`Matching run queued (${result.data.matchRunId.slice(0, 8)}...).`);
   }
 
   if (loading) {

@@ -4,7 +4,7 @@ import {
   getVeteranJobRecommendations,
   getVeteranProfile
 } from "../lib/api";
-import type { VeteranRecommendation } from "../types/matching";
+import type { MatchRunMeta, VeteranRecommendation } from "../types/matching";
 
 function formatScore(value: number | null) {
   if (value === null || Number.isNaN(value)) return "-";
@@ -15,7 +15,7 @@ export function VeteranRecommendedJobsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<VeteranRecommendation[]>([]);
-  const [runId, setRunId] = useState<string | null>(null);
+  const [matchRun, setMatchRun] = useState<MatchRunMeta | null>(null);
   const [applyingJobId, setApplyingJobId] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
 
@@ -43,7 +43,7 @@ export function VeteranRecommendedJobsPage() {
         return;
       }
 
-      setRunId(recommendationResult.data.matchRun?.id ?? null);
+      setMatchRun(recommendationResult.data.matchRun ?? null);
       setResults(recommendationResult.data.results);
       setLoading(false);
     }
@@ -53,6 +53,24 @@ export function VeteranRecommendedJobsPage() {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!profileId || !matchRun || (matchRun.status !== "queued" && matchRun.status !== "running")) {
+      return;
+    }
+
+    const intervalId = window.setInterval(async () => {
+      const refreshed = await getVeteranJobRecommendations(profileId);
+      if (refreshed.ok && refreshed.data) {
+        setResults(refreshed.data.results);
+        setMatchRun(refreshed.data.matchRun ?? null);
+      }
+    }, 3000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [profileId, matchRun?.id, matchRun?.status]);
 
   async function handleApply(jobId: string) {
     setApplyingJobId(jobId);
@@ -65,10 +83,10 @@ export function VeteranRecommendedJobsPage() {
     }
 
     if (!profileId) return;
-    const refreshed = await getVeteranJobRecommendations(profileId);
+      const refreshed = await getVeteranJobRecommendations(profileId);
     if (refreshed.ok && refreshed.data) {
       setResults(refreshed.data.results);
-      setRunId(refreshed.data.matchRun?.id ?? null);
+      setMatchRun(refreshed.data.matchRun ?? null);
     }
   }
 
@@ -83,14 +101,20 @@ export function VeteranRecommendedJobsPage() {
         <p className="mt-2 text-sm text-slate-600">
           Ranked jobs based on your profile and persona fit.
         </p>
-        {runId ? <p className="mt-2 text-sm text-slate-500">Latest run: {runId.slice(0, 8)}...</p> : null}
+        {matchRun ? (
+          <p className="mt-2 text-sm text-slate-500">
+            Latest run: {matchRun.id.slice(0, 8)}... ({matchRun.status})
+          </p>
+        ) : null}
         {error ? <p className="mt-3 text-sm font-medium text-rose-700">{error}</p> : null}
       </div>
 
       <div className="rounded-2xl border border-slate-300/70 bg-white/85 p-6 shadow-lg">
         {results.length === 0 ? (
           <p className="text-sm text-slate-600">
-            No recommendations yet. An employer needs to run matching on a job to produce ranked results.
+            {matchRun && (matchRun.status === "queued" || matchRun.status === "running")
+              ? "Matching is currently running for your profile. Recommendations will appear once the run completes."
+              : "No recommendations yet. An employer needs to run matching on a job to produce ranked results."}
           </p>
         ) : (
           <ul className="space-y-3">

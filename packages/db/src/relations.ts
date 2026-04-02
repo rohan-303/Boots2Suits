@@ -28,6 +28,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   veteranDocuments: many(veteranDocuments),
   companies: many(companies),
   postedJobs: many(jobs),
+  requestedMatchRuns: many(matchRuns),
   applicationEvents: many(applicationEvents)
 }));
 
@@ -111,6 +112,7 @@ export const jobsRelations = relations(jobs, ({ one, many }) => ({
     references: [users.id]
   }),
   personas: many(jobPersonas),
+  matchRuns: many(matchRuns),
   applications: many(applications),
   candidateScores: many(candidateJobScores)
 }));
@@ -145,7 +147,15 @@ export const applicationEventsRelations = relations(applicationEvents, ({ one })
   })
 }));
 
-export const matchRunsRelations = relations(matchRuns, ({ many }) => ({
+export const matchRunsRelations = relations(matchRuns, ({ one, many }) => ({
+  job: one(jobs, {
+    fields: [matchRuns.jobId],
+    references: [jobs.id]
+  }),
+  requestedByUser: one(users, {
+    fields: [matchRuns.requestedByUserId],
+    references: [users.id]
+  }),
   candidateScores: many(candidateJobScores)
 }));
 

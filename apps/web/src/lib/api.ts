@@ -6,7 +6,7 @@ import type {
   JobPersona
 } from "../types/employer";
 import type { VeteranApplication } from "../types/application";
-import type { EmployerMatchResult, VeteranRecommendation } from "../types/matching";
+import type { EmployerMatchResult, MatchRunMeta, VeteranRecommendation } from "../types/matching";
 import type {
   MilitaryOccupationSearchResult,
   VeteranPersona,
@@ -142,17 +142,19 @@ export async function uploadVeteranResume(file: File) {
     ok: true;
     resume: {
       id: string;
-      parseStatus: "uploaded" | "parsed" | "failed";
-      confidence: number;
-      sectionsFound: {
-        summary: boolean;
-        experience: number;
-        education: number;
-        certifications: number;
-        skills: number;
-      };
+      parseStatus: "pending" | "processing" | "completed" | "failed";
     };
   }>("/veteran/resume/upload", formData, "POST");
+}
+
+export async function rerunVeteranResumeParse(documentId: string) {
+  return request<{
+    ok: true;
+    resume: {
+      id: string;
+      parseStatus: "pending" | "processing" | "completed" | "failed";
+    };
+  }>(`/veteran/resume/${documentId}/parse`, { method: "POST" });
 }
 
 export async function searchMilitaryOccupations(query: string, branch?: string) {
@@ -216,7 +218,7 @@ export async function runJobMatching(jobId: string) {
   return request<{
     ok: true;
     matchRunId: string;
-    totalCandidatesScored: number;
+    status: "queued" | "running" | "completed" | "failed";
   }>(`/matching/jobs/${jobId}/run`, { method: "POST" });
 }
 
@@ -224,13 +226,7 @@ export async function getJobMatchResults(jobId: string) {
   return request<{
     ok: true;
     job: { id: string; title: string };
-    matchRun: {
-      id: string;
-      algorithmVersion: string;
-      scoreVersion: string;
-      explanationVersion: string;
-      createdAt: string;
-    } | null;
+    matchRun: MatchRunMeta | null;
     results: EmployerMatchResult[];
   }>(`/matching/jobs/${jobId}/results`, { method: "GET" });
 }
@@ -239,13 +235,7 @@ export async function getVeteranJobRecommendations(veteranProfileId: string) {
   return request<{
     ok: true;
     veteranProfileId: string;
-    matchRun: {
-      id: string;
-      algorithmVersion: string;
-      scoreVersion: string;
-      explanationVersion: string;
-      createdAt: string;
-    } | null;
+    matchRun: MatchRunMeta | null;
     results: VeteranRecommendation[];
   }>(`/matching/veterans/${veteranProfileId}/jobs`, { method: "GET" });
 }

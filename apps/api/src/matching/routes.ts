@@ -2,8 +2,7 @@ import {
   and,
   desc,
   eq,
-  inArray,
-  isNotNull
+  inArray
 } from "drizzle-orm";
 import { Router } from "express";
 import {
@@ -20,8 +19,9 @@ import {
   veteranProfiles
 } from "@boots2suits/db";
 import { buildAuthMiddleware, type AuthenticatedRequest } from "../auth/middleware.js";
-import { buildMatchRunFingerprint, scoreCandidateJobMatch } from "./engine.js";
 import { defaultScoringConfig } from "./scoringConfig.js";
+import { enqueueMatchingRunJob } from "../queue/enqueue.js";
+import { env } from "../config/env.js";
 
 type Db = ReturnType<typeof createDbClient>["db"];
 
@@ -62,16 +62,7 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
     const [jobRow] = await options.db
       .select({
         id: jobs.id,
-        title: jobs.title,
-        department: jobs.department,
-        locationType: jobs.locationType,
-        locationState: jobs.locationState,
-        compensationMin: jobs.compensationMin,
-        compensationMax: jobs.compensationMax,
-        mustHaveSkills: jobs.mustHaveSkills,
-        niceToHaveSkills: jobs.niceToHaveSkills,
-        requiredExperienceLevel: jobs.requiredExperienceLevel,
-        clearanceRequirement: jobs.clearanceRequirement
+        status: jobs.status
       })
       .from(jobs)
       .innerJoin(companies, eq(companies.id, jobs.companyId))
@@ -86,191 +77,51 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
       return res.status(404).json({ ok: false, error: "Job not found." });
     }
 
-    const [jobPersona] = await options.db
-      .select({
-        suggestedRoleFamily: jobPersonas.suggestedRoleFamily,
-        leadershipLevel: jobPersonas.leadershipLevel,
-        suggestedCandidateArchetypes: jobPersonas.suggestedCandidateArchetypes
-      })
-      .from(jobPersonas)
-      .where(and(eq(jobPersonas.jobId, jobId), eq(jobPersonas.scope, "overall")))
-      .limit(1);
-
-    const veterans = await options.db
-      .select({
-        id: veteranProfiles.id,
-        userId: veteranProfiles.userId,
-        locationState: veteranProfiles.locationState,
-        preferredWorkModes: veteranProfiles.preferredWorkModes,
-        yearsOfService: veteranProfiles.yearsOfService,
-        clearanceLevel: veteranProfiles.clearanceLevel,
-        salaryExpectationMin: veteranProfiles.salaryExpectationMin,
-        salaryExpectationMax: veteranProfiles.salaryExpectationMax,
-        keySkills: veteranProfiles.keySkills,
-        desiredRoles: veteranProfiles.desiredRoles,
-        highestRank: veteranProfiles.highestRank,
-        leadershipExperience: veteranProfiles.leadershipExperience
-      })
-      .from(veteranProfiles)
-      .where(isNotNull(veteranProfiles.profileCompletedAt));
-
-    if (veterans.length === 0) {
-      return res.status(400).json({ ok: false, error: "No eligible veterans available for matching." });
+    if (jobRow.status === "closed") {
+      return res.status(400).json({ ok: false, error: "Cannot run matching for a closed job." });
     }
-
-    const personas = await options.db
-      .select({
-        veteranProfileId: veteranPersonas.veteranProfileId,
-        roleClusters: veteranPersonas.roleClusters,
-        suggestedJobTitles: veteranPersonas.suggestedJobTitles,
-        leadershipProfile: veteranPersonas.leadershipProfile,
-        experienceLevel: veteranPersonas.experienceLevel
-      })
-      .from(veteranPersonas)
-      .where(
-        and(
-          inArray(
-            veteranPersonas.veteranProfileId,
-            veterans.map((veteran) => veteran.id)
-          ),
-          eq(veteranPersonas.scope, "overall")
-        )
-      );
-    const personaByVeteranId = new Map(personas.map((persona) => [persona.veteranProfileId, persona]));
-
-    const scored = veterans.map((veteran) => {
-      const veteranPersona = personaByVeteranId.get(veteran.id);
-      const match = scoreCandidateJobMatch({
-        job: {
-          id: jobRow.id,
-          title: jobRow.title,
-          department: jobRow.department,
-          locationType: jobRow.locationType,
-          locationState: jobRow.locationState,
-          compensationMin: jobRow.compensationMin,
-          compensationMax: jobRow.compensationMax,
-          mustHaveSkills: asStringArray(jobRow.mustHaveSkills),
-          niceToHaveSkills: asStringArray(jobRow.niceToHaveSkills),
-          requiredExperienceLevel: jobRow.requiredExperienceLevel,
-          clearanceRequirement: jobRow.clearanceRequirement
-        },
-        jobPersona: jobPersona
-          ? {
-              suggestedRoleFamily: jobPersona.suggestedRoleFamily,
-              leadershipLevel: jobPersona.leadershipLevel,
-              suggestedCandidateArchetypes: asStringArray(jobPersona.suggestedCandidateArchetypes)
-            }
-          : null,
-        veteran: {
-          id: veteran.id,
-          userId: veteran.userId,
-          locationState: veteran.locationState,
-          preferredWorkModes: asStringArray(veteran.preferredWorkModes),
-          yearsOfService: veteran.yearsOfService,
-          clearanceLevel: veteran.clearanceLevel,
-          salaryExpectationMin: veteran.salaryExpectationMin,
-          salaryExpectationMax: veteran.salaryExpectationMax,
-          keySkills: asStringArray(veteran.keySkills),
-          desiredRoles: asStringArray(veteran.desiredRoles),
-          highestRank: veteran.highestRank,
-          leadershipExperience: veteran.leadershipExperience
-        },
-        veteranPersona: veteranPersona
-          ? {
-              roleClusters: asStringArray(veteranPersona.roleClusters),
-              suggestedJobTitles: asStringArray(veteranPersona.suggestedJobTitles),
-              leadershipProfile: veteranPersona.leadershipProfile,
-              experienceLevel: veteranPersona.experienceLevel
-            }
-          : null
-      });
-
-      return {
-        veteranProfileId: veteran.id,
-        match
-      };
-    });
-
-    const runSnapshotHash = scored
-      .map((record) => record.match.sourceSnapshotHash)
-      .sort()
-      .join(":");
-    const inputFingerprint = buildMatchRunFingerprint({
-      jobId,
-      jobSnapshotHash: runSnapshotHash,
-      candidateIds: veterans.map((veteran) => veteran.id)
-    });
 
     const [run] = await options.db
       .insert(matchRuns)
       .values({
+        jobId,
         algorithmVersion: defaultScoringConfig.algorithmFamily,
         embeddingModelVersion: defaultScoringConfig.embeddingModelVersion,
         rerankerVersion: defaultScoringConfig.rerankerVersion,
         calibrationVersion: defaultScoringConfig.calibrationVersion,
         scoreVersion: defaultScoringConfig.version,
         explanationVersion: defaultScoringConfig.explanationVersion,
-        inputFingerprint,
-        sourceSnapshotHash: runSnapshotHash
+        status: "queued",
+        requestedByUserId: authUser.id
       })
       .returning({ id: matchRuns.id });
 
-    const ranked = [...scored].sort((left, right) => right.match.score - left.match.score);
-    const scoreRows = ranked.map((item, idx) => ({
-      veteranProfileId: item.veteranProfileId,
-      jobId,
-      matchRunId: run.id,
-      algorithmVersion: defaultScoringConfig.algorithmFamily,
-      embeddingModelVersion: defaultScoringConfig.embeddingModelVersion,
-      rerankerVersion: defaultScoringConfig.rerankerVersion,
-      calibrationVersion: defaultScoringConfig.calibrationVersion,
-      scoreVersion: defaultScoringConfig.version,
-      explanationVersion: defaultScoringConfig.explanationVersion,
-      inputFingerprint,
-      sourceSnapshotHash: item.match.sourceSnapshotHash,
-      score: item.match.score.toFixed(6),
-      semanticScore: item.match.semanticScore.toFixed(6),
-      ruleScore: item.match.ruleScore.toFixed(6),
-      explanation: item.match.explanation,
-      explanationData: item.match.explanationData,
-      rank: idx + 1
-    }));
-
-    const createdScores = await options.db
-      .insert(candidateJobScores)
-      .values(scoreRows)
-      .returning({
-        id: candidateJobScores.id,
-        veteranProfileId: candidateJobScores.veteranProfileId
+    try {
+      await enqueueMatchingRunJob(env.REDIS_URL, {
+        matchRunId: run.id,
+        jobId,
+        requestedByUserId: authUser.id
       });
+    } catch (error) {
+      await options.db
+        .update(matchRuns)
+        .set({
+          status: "failed",
+          failedAt: new Date(),
+          errorMessage: error instanceof Error ? error.message : "Failed to enqueue match run."
+        })
+        .where(eq(matchRuns.id, run.id));
 
-    const scoreIdByVeteran = new Map(
-      createdScores.map((row) => [row.veteranProfileId, row.id])
-    );
-    const featureRows = ranked.flatMap((item) => {
-      const scoreId = scoreIdByVeteran.get(item.veteranProfileId);
-      if (!scoreId) return [];
-      const sortedFeatures = [...item.match.features]
-        .sort((left, right) => Math.abs(right.featureImpact) - Math.abs(left.featureImpact));
-      return sortedFeatures.map((feature, index) => ({
-        candidateJobScoreId: scoreId,
-        featureName: feature.featureName,
-        featureWeight: feature.featureWeight.toFixed(6),
-        featureValue: feature.featureValue.toFixed(4),
-        featureImpact: feature.featureImpact.toFixed(6),
-        reasonCode: feature.reasonCode,
-        displayOrder: index
-      }));
-    });
-
-    if (featureRows.length > 0) {
-      await options.db.insert(candidateJobScoreFeatures).values(featureRows);
+      return res.status(500).json({
+        ok: false,
+        error: "Unable to enqueue matching run."
+      });
     }
 
-    return res.status(201).json({
+    return res.status(202).json({
       ok: true,
       matchRunId: run.id,
-      totalCandidatesScored: ranked.length
+      status: "queued"
     });
   });
 
@@ -299,6 +150,33 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
       return res.status(404).json({ ok: false, error: "Job not found." });
     }
 
+    const [latestRun] = await options.db
+      .select({
+        id: matchRuns.id,
+        status: matchRuns.status,
+        algorithmVersion: matchRuns.algorithmVersion,
+        scoreVersion: matchRuns.scoreVersion,
+        explanationVersion: matchRuns.explanationVersion,
+        createdAt: matchRuns.createdAt,
+        startedAt: matchRuns.startedAt,
+        completedAt: matchRuns.completedAt,
+        failedAt: matchRuns.failedAt,
+        errorMessage: matchRuns.errorMessage
+      })
+      .from(matchRuns)
+      .where(eq(matchRuns.jobId, jobId))
+      .orderBy(desc(matchRuns.createdAt))
+      .limit(1);
+
+    if (!latestRun) {
+      return res.json({
+        ok: true,
+        job,
+        matchRun: null,
+        results: []
+      });
+    }
+
     const [latest] = await options.db
       .select({
         matchRunId: candidateJobScores.matchRunId,
@@ -309,26 +187,14 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
       .orderBy(desc(candidateJobScores.createdAt))
       .limit(1);
 
-    if (!latest) {
+    if (!latest || latest.matchRunId !== latestRun.id) {
       return res.json({
         ok: true,
         job,
-        matchRun: null,
+        matchRun: latestRun,
         results: []
       });
     }
-
-    const [runMeta] = await options.db
-      .select({
-        id: matchRuns.id,
-        algorithmVersion: matchRuns.algorithmVersion,
-        scoreVersion: matchRuns.scoreVersion,
-        explanationVersion: matchRuns.explanationVersion,
-        createdAt: matchRuns.createdAt
-      })
-      .from(matchRuns)
-      .where(eq(matchRuns.id, latest.matchRunId))
-      .limit(1);
 
     const rows = await options.db
       .select({
@@ -422,7 +288,7 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
     return res.json({
       ok: true,
       job,
-      matchRun: runMeta ?? null,
+      matchRun: latestRun,
       results: rows.map((row) => ({
         veteranProfileId: row.veteranProfileId,
         candidate: {
@@ -492,7 +358,7 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
         return res.status(403).json({ ok: false, error: "Cannot access recommendations for this profile." });
       }
 
-      const [latest] = await options.db
+      const [latestScoreRun] = await options.db
         .select({
           matchRunId: candidateJobScores.matchRunId
         })
@@ -501,7 +367,7 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
         .orderBy(desc(candidateJobScores.createdAt))
         .limit(1);
 
-      if (!latest) {
+      if (!latestScoreRun) {
         return res.json({
           ok: true,
           veteranProfileId,
@@ -511,15 +377,20 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
       }
 
       const [runMeta] = await options.db
-        .select({
+      .select({
           id: matchRuns.id,
+          status: matchRuns.status,
           algorithmVersion: matchRuns.algorithmVersion,
           scoreVersion: matchRuns.scoreVersion,
           explanationVersion: matchRuns.explanationVersion,
-          createdAt: matchRuns.createdAt
+          createdAt: matchRuns.createdAt,
+          startedAt: matchRuns.startedAt,
+          completedAt: matchRuns.completedAt,
+          failedAt: matchRuns.failedAt,
+          errorMessage: matchRuns.errorMessage
         })
         .from(matchRuns)
-        .where(eq(matchRuns.id, latest.matchRunId))
+      .where(eq(matchRuns.id, latestScoreRun.matchRunId))
         .limit(1);
 
       const rows = await options.db
@@ -551,7 +422,7 @@ export function createMatchingRouter(options: MatchingRouterOptions) {
         .where(
           and(
             eq(candidateJobScores.veteranProfileId, veteranProfileId),
-            eq(candidateJobScores.matchRunId, latest.matchRunId)
+            eq(candidateJobScores.matchRunId, latestScoreRun.matchRunId)
           )
         )
         .orderBy(candidateJobScores.rank, desc(candidateJobScores.score));

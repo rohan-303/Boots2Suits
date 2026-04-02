@@ -13,9 +13,9 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { buildAuthMiddleware, type AuthenticatedRequest } from "../auth/middleware.js";
-import { buildSafeProfileEnrichment } from "./enrichment.js";
 import { generateOverallVeteranPersona } from "./persona.js";
-import { extractPdfText, parseResumeText } from "./resumeParser.js";
+import { enqueueResumeParsingJob } from "../queue/enqueue.js";
+import { env } from "../config/env.js";
 
 type Db = ReturnType<typeof createDbClient>["db"];
 
@@ -333,14 +333,7 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
 
       const [profile] = await options.db
         .select({
-          id: veteranProfiles.id,
-          responsibilitiesSummary: veteranProfiles.responsibilitiesSummary,
-          leadershipExperience: veteranProfiles.leadershipExperience,
-          keySkills: veteranProfiles.keySkills,
-          toolsTechnologies: veteranProfiles.toolsTechnologies,
-          desiredRoles: veteranProfiles.desiredRoles,
-          civilianSummary: veteranProfiles.civilianSummary,
-          translationConfidence: veteranProfiles.translationConfidence
+          id: veteranProfiles.id
         })
         .from(veteranProfiles)
         .where(eq(veteranProfiles.userId, authUser.id))
@@ -379,7 +372,7 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
           mimeType: req.file.mimetype || "application/pdf",
           sizeBytes: req.file.size,
           storagePath: req.file.path,
-          parseStatus: "uploaded",
+          parseStatus: "pending",
           parserVersion: "pdf-parse-v1",
           uploadedByUserId: authUser.id,
           uploadedAt: now
@@ -396,71 +389,83 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
           .where(eq(veteranDocuments.id, activeResume.id));
       }
 
-      try {
-        const fileBuffer = fs.readFileSync(req.file.path);
-        const rawText = await extractPdfText(fileBuffer);
-        const parsed = parseResumeText(rawText);
-        const enrichment = buildSafeProfileEnrichment(profile, parsed);
+      await enqueueResumeParsingJob(env.REDIS_URL, {
+        documentId: createdDoc.id,
+        veteranProfileId: profile.id
+      });
 
-        await options.db
-          .update(veteranProfiles)
-          .set({
-            resumeText: rawText || null,
-            ...enrichment,
-            updatedAt: now
-          })
-          .where(eq(veteranProfiles.id, profile.id));
-
-        await options.db
-          .update(veteranDocuments)
-          .set({
-            parseStatus: "parsed",
-            parseConfidence: parsed.confidence.toFixed(3),
-            parserVersion: "pdf-parse-v1",
-            parsedData: {
-              summary: parsed.summary,
-              experience: parsed.experience,
-              education: parsed.education,
-              certifications: parsed.certifications,
-              skills: parsed.skills
-            },
-            parseError: null,
-            parsedAt: now
-          })
-          .where(eq(veteranDocuments.id, createdDoc.id));
-
-        return res.status(201).json({
-          ok: true,
-          resume: {
-            id: createdDoc.id,
-            parseStatus: "parsed",
-            confidence: parsed.confidence,
-            sectionsFound: {
-              summary: Boolean(parsed.summary),
-              experience: parsed.experience.length,
-              education: parsed.education.length,
-              certifications: parsed.certifications.length,
-              skills: parsed.skills.length
-            }
-          }
-        });
-      } catch (error) {
-        await options.db
-          .update(veteranDocuments)
-          .set({
-            parseStatus: "failed",
-            parseError: error instanceof Error ? error.message : "Resume parsing failed.",
-            parsedAt: now
-          })
-          .where(eq(veteranDocuments.id, createdDoc.id));
-
-        return res.status(500).json({
-          ok: false,
-          error: "Resume uploaded but parsing failed. Please try another PDF."
-        });
-      }
+      return res.status(202).json({
+        ok: true,
+        resume: {
+          id: createdDoc.id,
+          parseStatus: "pending"
+        }
+      });
     }
   );
+
+  router.post("/resume/:documentId/parse", async (req: AuthenticatedRequest, res) => {
+    const authUser = req.authUser;
+    if (!authUser) {
+      return res.status(401).json({ ok: false, error: "Authentication required." });
+    }
+
+    const [profile] = await options.db
+      .select({ id: veteranProfiles.id })
+      .from(veteranProfiles)
+      .where(eq(veteranProfiles.userId, authUser.id))
+      .limit(1);
+    if (!profile) {
+      return res.status(404).json({ ok: false, error: "Veteran profile not found." });
+    }
+
+    const [document] = await options.db
+      .select({
+        id: veteranDocuments.id,
+        parseStatus: veteranDocuments.parseStatus
+      })
+      .from(veteranDocuments)
+      .where(
+        and(
+          eq(veteranDocuments.id, req.params.documentId),
+          eq(veteranDocuments.veteranProfileId, profile.id),
+          eq(veteranDocuments.documentType, "resume"),
+          eq(veteranDocuments.isActive, true)
+        )
+      )
+      .limit(1);
+
+    if (!document) {
+      return res.status(404).json({ ok: false, error: "Active resume document not found." });
+    }
+
+    if (document.parseStatus === "processing") {
+      return res.status(409).json({ ok: false, error: "Resume parsing is already in progress." });
+    }
+
+    await options.db
+      .update(veteranDocuments)
+      .set({
+        parseStatus: "pending",
+        parseError: null,
+        parseConfidence: null,
+        parsedAt: null
+      })
+      .where(eq(veteranDocuments.id, document.id));
+
+    await enqueueResumeParsingJob(env.REDIS_URL, {
+      documentId: document.id,
+      veteranProfileId: profile.id
+    });
+
+    return res.status(202).json({
+      ok: true,
+      resume: {
+        id: document.id,
+        parseStatus: "pending"
+      }
+    });
+  });
 
   router.post("/persona/generate", async (req: AuthenticatedRequest, res) => {
     const authUser = req.authUser;
@@ -503,7 +508,7 @@ export function createVeteranRouter(options: VeteranRouterOptions) {
           eq(veteranDocuments.veteranProfileId, profile.id),
           eq(veteranDocuments.documentType, "resume"),
           eq(veteranDocuments.isActive, true),
-          eq(veteranDocuments.parseStatus, "parsed")
+          eq(veteranDocuments.parseStatus, "completed")
         )
       )
       .orderBy(desc(veteranDocuments.uploadedAt))

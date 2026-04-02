@@ -1,3 +1,18 @@
+export type MatchRunStatus = "queued" | "running" | "completed" | "failed";
+
+export type MatchRunMeta = {
+  id: string;
+  status: MatchRunStatus;
+  algorithmVersion: string;
+  scoreVersion: string;
+  explanationVersion: string;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  failedAt: string | null;
+  errorMessage: string | null;
+};
+
 export type MatchFeature = {
   featureName: string;
   featureWeight: number | null;

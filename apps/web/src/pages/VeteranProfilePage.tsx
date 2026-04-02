@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import {
   generateVeteranPersona,
   getVeteranProfile,
+  rerunVeteranResumeParse,
   uploadVeteranResume
 } from "../lib/api";
 import type { VeteranPersona, VeteranProfile, VeteranResume } from "../types/veteran";
@@ -15,6 +16,7 @@ export function VeteranProfilePage() {
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [requeueingParse, setRequeueingParse] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -34,6 +36,20 @@ export function VeteranProfilePage() {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    if (!resume || (resume.parseStatus !== "pending" && resume.parseStatus !== "processing")) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void load();
+    }, 3000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [resume?.id, resume?.parseStatus]);
 
   async function onGeneratePersona() {
     setGenerating(true);
@@ -59,6 +75,19 @@ export function VeteranProfilePage() {
     await load();
   }
 
+  async function onReparseResume() {
+    if (!resume) return;
+    setRequeueingParse(true);
+    setError(null);
+    const result = await rerunVeteranResumeParse(resume.id);
+    setRequeueingParse(false);
+    if (!result.ok) {
+      setError(result.error ?? "Unable to re-run resume parsing.");
+      return;
+    }
+    await load();
+  }
+
   if (loading) {
     return <div className="p-6 text-sm text-slate-600">Loading veteran profile...</div>;
   }
@@ -66,7 +95,11 @@ export function VeteranProfilePage() {
   if (!profile) {
     return (
       <div className="rounded border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800">
-        Profile not found. <Link to="/app/veteran/onboarding" className="underline">Start onboarding</Link>.
+        Profile not found.{" "}
+        <Link to="/app/veteran/onboarding" className="underline">
+          Start onboarding
+        </Link>
+        .
       </div>
     );
   }
@@ -86,14 +119,22 @@ export function VeteranProfilePage() {
           </button>
         </div>
         <p className="mt-3 text-sm text-slate-600">
-          {profile.mosTitle} ({profile.mosCode}) • {profile.militaryBranch} • {profile.locationCity},{" "}
+          {profile.mosTitle} ({profile.mosCode}) - {profile.militaryBranch} - {profile.locationCity},{" "}
           {profile.locationState}
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <p className="text-sm"><strong>Rank:</strong> {profile.highestRank ?? "-"}</p>
-          <p className="text-sm"><strong>Clearance:</strong> {profile.clearanceLevel ?? "-"}</p>
-          <p className="text-sm"><strong>Work Authorization:</strong> {profile.workAuthorization ?? "-"}</p>
-          <p className="text-sm"><strong>Relocation:</strong> {profile.relocationPreference ?? "-"}</p>
+          <p className="text-sm">
+            <strong>Rank:</strong> {profile.highestRank ?? "-"}
+          </p>
+          <p className="text-sm">
+            <strong>Clearance:</strong> {profile.clearanceLevel ?? "-"}
+          </p>
+          <p className="text-sm">
+            <strong>Work Authorization:</strong> {profile.workAuthorization ?? "-"}
+          </p>
+          <p className="text-sm">
+            <strong>Relocation:</strong> {profile.relocationPreference ?? "-"}
+          </p>
         </div>
         <p className="mt-4 text-sm text-slate-700">{profile.responsibilitiesSummary}</p>
         <div className="mt-4">
@@ -110,7 +151,7 @@ export function VeteranProfilePage() {
             Upload a PDF to enrich your skills/profile signals without overwriting your manual entries.
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            <label className="rounded border border-slate-400 bg-white px-3 py-2 text-sm font-medium cursor-pointer">
+            <label className="cursor-pointer rounded border border-slate-400 bg-white px-3 py-2 text-sm font-medium">
               {uploading ? "Uploading..." : "Upload / Replace Resume (PDF)"}
               <input
                 type="file"
@@ -127,14 +168,36 @@ export function VeteranProfilePage() {
               />
             </label>
             {resume ? (
-              <p className="text-xs text-slate-600">
-                {resume.originalFilename} - status: {resume.parseStatus}
-                {resume.parseConfidence ? ` - confidence: ${resume.parseConfidence}` : ""}
-              </p>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                <p>
+                  {resume.originalFilename} - status: {resume.parseStatus}
+                  {resume.parseConfidence ? ` - confidence: ${resume.parseConfidence}` : ""}
+                </p>
+                {resume.parseStatus === "failed" ? (
+                  <button
+                    type="button"
+                    onClick={() => void onReparseResume()}
+                    disabled={requeueingParse}
+                    className="rounded border border-slate-400 px-2 py-1 text-[11px] font-semibold text-slate-700 disabled:opacity-60"
+                  >
+                    {requeueingParse ? "Re-queueing..." : "Retry Parse"}
+                  </button>
+                ) : null}
+              </div>
             ) : (
               <p className="text-xs text-slate-500">No resume uploaded yet.</p>
             )}
           </div>
+          {resume?.parseStatus === "pending" ? (
+            <p className="mt-2 text-xs text-amber-700">
+              Resume queued for parsing. This page will refresh automatically.
+            </p>
+          ) : null}
+          {resume?.parseStatus === "processing" ? (
+            <p className="mt-2 text-xs text-blue-700">
+              Resume parsing in progress. This page will refresh automatically.
+            </p>
+          ) : null}
           {resume?.parsedData ? (
             <div className="mt-3 text-xs text-slate-700">
               <p>
@@ -150,7 +213,8 @@ export function VeteranProfilePage() {
                   .join(", ") || "none"}
               </p>
               <p className="mt-1">
-                Parsed skills preview: {(resume.parsedData.skills ?? []).slice(0, 8).join(", ") || "-"}
+                Parsed skills preview:{" "}
+                {(resume.parsedData.skills ?? []).slice(0, 8).join(", ") || "-"}
               </p>
             </div>
           ) : null}
@@ -166,7 +230,10 @@ export function VeteranProfilePage() {
         {persona ? (
           <>
             <p className="mt-2 text-sm text-slate-700">{persona.summary}</p>
-            <Link className="mt-3 inline-block text-sm font-semibold text-blue-700 underline" to="/app/veteran/persona">
+            <Link
+              className="mt-3 inline-block text-sm font-semibold text-blue-700 underline"
+              to="/app/veteran/persona"
+            >
               View full persona
             </Link>
           </>

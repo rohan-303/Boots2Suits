@@ -92,8 +92,15 @@ export const applicationEventTypeEnum = pgEnum("application_event_type", [
 ]);
 export const veteranDocumentTypeEnum = pgEnum("veteran_document_type", ["resume"]);
 export const resumeParseStatusEnum = pgEnum("resume_parse_status", [
-  "uploaded",
-  "parsed",
+  "pending",
+  "processing",
+  "completed",
+  "failed"
+]);
+export const matchRunStatusEnum = pgEnum("match_run_status", [
+  "queued",
+  "running",
+  "completed",
   "failed"
 ]);
 
@@ -370,7 +377,7 @@ export const veteranDocuments = pgTable(
     sizeBytes: integer("size_bytes").notNull(),
     storagePath: text("storage_path").notNull(),
     parserVersion: text("parser_version"),
-    parseStatus: resumeParseStatusEnum("parse_status").notNull().default("uploaded"),
+    parseStatus: resumeParseStatusEnum("parse_status").notNull().default("pending"),
     parseConfidence: numeric("parse_confidence", { precision: 4, scale: 3 }),
     parseError: text("parse_error"),
     parsedData: jsonb("parsed_data"),
@@ -548,19 +555,31 @@ export const matchRuns = pgTable(
   "match_runs",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
     algorithmVersion: text("algorithm_version").notNull().default("v1"),
     embeddingModelVersion: text("embedding_model_version").notNull().default("unknown"),
     rerankerVersion: text("reranker_version"),
     calibrationVersion: text("calibration_version"),
     scoreVersion: text("score_version").notNull().default("v1"),
     explanationVersion: text("explanation_version").notNull().default("v1"),
+    status: matchRunStatusEnum("status").notNull().default("queued"),
     inputFingerprint: text("input_fingerprint"),
     sourceSnapshotHash: text("source_snapshot_hash"),
+    requestedByUserId: uuid("requested_by_user_id").references(() => users.id, {
+      onDelete: "set null"
+    }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    failedAt: timestamp("failed_at", { withTimezone: true }),
+    errorMessage: text("error_message"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
   },
   (table) => ({
     matchRunsCreatedAtIdx: index("idx_match_runs_created_at").on(table.createdAt),
-    matchRunsFingerprintIdx: index("idx_match_runs_input_fingerprint").on(table.inputFingerprint)
+    matchRunsFingerprintIdx: index("idx_match_runs_input_fingerprint").on(table.inputFingerprint),
+    matchRunsStatusIdx: index("idx_match_runs_status").on(table.status),
+    matchRunsRequestedByIdx: index("idx_match_runs_requested_by_user_id").on(table.requestedByUserId),
+    matchRunsJobIdx: index("idx_match_runs_job_id").on(table.jobId)
   })
 );
 

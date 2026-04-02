@@ -88,6 +88,14 @@ Worker:
 npm run dev:worker
 ```
 
+Worker requires `apps/worker/.env` with:
+
+```bash
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/boots2suits
+REDIS_URL=redis://localhost:6379
+WORKER_CONCURRENCY=2
+```
+
 ## Quality checks
 
 ```bash
@@ -125,7 +133,8 @@ Role-protection skeleton test routes:
 - `GET /veteran/profile`
 - `POST /veteran/profile`
 - `POST /veteran/persona/generate`
-- `POST /veteran/resume/upload` (PDF upload + parse + safe enrichment)
+- `POST /veteran/resume/upload` (PDF upload + async parse queue)
+- `POST /veteran/resume/:documentId/parse` (requeue parse for active resume)
 
 ## Employer onboarding + jobs routes (foundation)
 
@@ -185,4 +194,4 @@ npm run match:inspect --workspace @boots2suits/api -- veteran --veteranProfileId
 - This phase intentionally avoids product features and business logic.
 - API startup validates `DATABASE_URL`, checks DB connectivity before listening,
   and exposes `/health` with live database status.
-- Worker currently validates Redis connectivity and queue readiness only.
+- Worker processes async resume parsing and async matching runs via Redis/BullMQ.
