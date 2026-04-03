@@ -2,6 +2,7 @@ import { Queue } from "bullmq";
 import {
   QUEUE_NAMES,
   apiLogger,
+  type ConnectorExportJobPayload,
   type EmbeddingGenerationJobPayload,
   type MatchingRunJobPayload,
   type ResumeParsingJobPayload
@@ -11,6 +12,7 @@ import { getRedisConnection } from "./connection.js";
 let resumeQueue: Queue<ResumeParsingJobPayload> | null = null;
 let matchingQueue: Queue<MatchingRunJobPayload> | null = null;
 let embeddingQueue: Queue<EmbeddingGenerationJobPayload> | null = null;
+let connectorExportQueue: Queue<ConnectorExportJobPayload> | null = null;
 
 export type RetryConfig = {
   attempts: number;
@@ -55,6 +57,15 @@ function getEmbeddingQueue(redisUrl: string) {
     });
   }
   return embeddingQueue;
+}
+
+function getConnectorExportQueue(redisUrl: string) {
+  if (!connectorExportQueue) {
+    connectorExportQueue = new Queue<ConnectorExportJobPayload>(QUEUE_NAMES.connectorExports, {
+      connection: getRedisConnection(redisUrl)
+    });
+  }
+  return connectorExportQueue;
 }
 
 function buildJobId(baseJobId: string, behavior?: EnqueueBehavior) {
@@ -195,6 +206,49 @@ export async function enqueueEmbeddingGenerationJob(
   apiLogger.info("queue.job.enqueue", {
     action: "enqueue_embedding_generation",
     queue: QUEUE_NAMES.embeddingGeneration,
+    jobId: String(job.id),
+    status: "queued",
+    idempotencyKey: jobId,
+    attempts: retryConfig.attempts,
+    backoffMs: retryConfig.backoffMs
+  });
+  return job;
+}
+
+export async function enqueueConnectorExportJob(
+  redisUrl: string,
+  payload: ConnectorExportJobPayload,
+  retryConfig: RetryConfig,
+  behavior?: EnqueueBehavior
+) {
+  const queue = getConnectorExportQueue(redisUrl);
+  const jobId = buildJobId(`connector-export:${payload.exportId}`, behavior);
+  const existing = await findExistingJobById(queue, jobId);
+  if (!behavior?.forceEnqueue && existing && ACTIVE_QUEUE_STATES.has(existing.state)) {
+    apiLogger.info("queue.job.enqueue", {
+      action: "enqueue_connector_export",
+      queue: QUEUE_NAMES.connectorExports,
+      jobId: String(existing.existing.id),
+      status: "deduped",
+      existingState: existing.state,
+      idempotencyKey: jobId
+    });
+    return existing.existing;
+  }
+
+  const job = await queue.add("connector-export", payload, {
+    jobId,
+    attempts: retryConfig.attempts,
+    backoff: {
+      type: "exponential",
+      delay: retryConfig.backoffMs
+    },
+    removeOnComplete: 100,
+    removeOnFail: 200
+  });
+  apiLogger.info("queue.job.enqueue", {
+    action: "enqueue_connector_export",
+    queue: QUEUE_NAMES.connectorExports,
     jobId: String(job.id),
     status: "queued",
     idempotencyKey: jobId,

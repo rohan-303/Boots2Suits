@@ -6,6 +6,7 @@ import {
   isRetryableError,
   normalizeError,
   workerLogger,
+  type ConnectorExportJobPayload,
   type EmbeddingGenerationJobPayload,
   QUEUE_NAMES,
   type MatchingRunJobPayload,
@@ -15,6 +16,7 @@ import { processMatchingRun } from "./matchingProcessor.js";
 import { processResumeParsingJob } from "./resumeProcessor.js";
 import { createEmbeddingsProviderFromEnv } from "./embeddings/provider.js";
 import { processEmbeddingGenerationJob } from "./embeddingProcessor.js";
+import { processConnectorExportJob } from "./connectorExportProcessor.js";
 
 const envSchema = z.object({
   REDIS_URL: z.string().url().default("redis://localhost:6379"),
@@ -209,6 +211,45 @@ const embeddingWorker = new Worker<EmbeddingGenerationJobPayload>(
   }
 );
 
+const connectorExportWorker = new Worker<ConnectorExportJobPayload>(
+  QUEUE_NAMES.connectorExports,
+  async (job) => {
+    const timed = workerLogger.timed("worker.job.connector_export", {
+      action: "connector_export",
+      queue: QUEUE_NAMES.connectorExports,
+      jobId: String(job.id),
+      status: "started",
+      exportId: job.data.exportId,
+      connectorType: job.data.connectorType
+    });
+    try {
+      await processConnectorExportJob(db, job.data, {
+        attemptNumber: job.attemptsMade + 1,
+        maxAttempts: job.opts.attempts ?? 1,
+        startedAt: Date.now()
+      });
+      timed.success({
+        status: "completed",
+        attemptNumber: job.attemptsMade + 1,
+        maxAttempts: job.opts.attempts ?? 1
+      });
+    } catch (error) {
+      timed.fail(error, {
+        attemptNumber: job.attemptsMade + 1,
+        maxAttempts: job.opts.attempts ?? 1
+      });
+      if (!isRetryableError(error)) {
+        throw new UnrecoverableError(error instanceof Error ? error.message : "Non-retryable connector export failure.");
+      }
+      throw error;
+    }
+  },
+  {
+    connection,
+    concurrency: env.WORKER_CONCURRENCY
+  }
+);
+
 resumeWorker.on("failed", (job, error) => {
   const attempts = job?.attemptsMade ?? 0;
   const maxAttempts = job?.opts?.attempts ?? 1;
@@ -312,16 +353,58 @@ embeddingWorker.on("completed", (job) => {
   });
 });
 
+connectorExportWorker.on("failed", (job, error) => {
+  const attempts = job?.attemptsMade ?? 0;
+  const maxAttempts = job?.opts?.attempts ?? 1;
+  const willRetry = attempts < maxAttempts;
+  workerLogger.error("worker.job.connector_export", error, {
+    action: "connector_export",
+    queue: QUEUE_NAMES.connectorExports,
+    jobId: String(job?.id ?? "unknown"),
+    status: willRetry ? "retry" : "failed",
+    attemptNumber: attempts,
+    maxAttempts,
+    exportId: job?.data.exportId,
+    connectorType: job?.data.connectorType
+  });
+  if (!willRetry) {
+    void recordTerminalFailure({
+      queueName: QUEUE_NAMES.connectorExports,
+      job,
+      error
+    });
+  }
+});
+
+connectorExportWorker.on("completed", (job) => {
+  workerLogger.info("worker.job.connector_export", {
+    action: "connector_export",
+    queue: QUEUE_NAMES.connectorExports,
+    jobId: String(job.id),
+    status: "completed",
+    attemptNumber: job.attemptsMade,
+    maxAttempts: job.opts.attempts ?? 1,
+    exportId: job.data.exportId,
+    connectorType: job.data.connectorType
+  });
+});
+
 async function start() {
   await Promise.all([
     resumeWorker.waitUntilReady(),
     matchingWorker.waitUntilReady(),
-    embeddingWorker.waitUntilReady()
+    embeddingWorker.waitUntilReady(),
+    connectorExportWorker.waitUntilReady()
   ]);
   workerLogger.info("worker.startup", {
     action: "worker_startup",
     status: "success",
-    queues: [QUEUE_NAMES.resumeParsing, QUEUE_NAMES.matchingRuns, QUEUE_NAMES.embeddingGeneration],
+    queues: [
+      QUEUE_NAMES.resumeParsing,
+      QUEUE_NAMES.matchingRuns,
+      QUEUE_NAMES.embeddingGeneration,
+      QUEUE_NAMES.connectorExports
+    ],
     concurrency: env.WORKER_CONCURRENCY,
     embeddingMode: embeddingsProvider.mode,
     embeddingModelVersion: embeddingsProvider.modelVersion,
@@ -338,7 +421,12 @@ async function shutdown(signal: NodeJS.Signals) {
     status: "start",
     signal
   });
-  await Promise.all([resumeWorker.close(), matchingWorker.close(), embeddingWorker.close()]);
+  await Promise.all([
+    resumeWorker.close(),
+    matchingWorker.close(),
+    embeddingWorker.close(),
+    connectorExportWorker.close()
+  ]);
   await connection.quit();
   await pool.end();
   workerLogger.info("worker.shutdown", {

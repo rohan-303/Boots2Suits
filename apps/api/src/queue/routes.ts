@@ -4,17 +4,24 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   asyncJobDeadLetters,
+  jobCandidateExports,
   createDbClient,
   jobPersonas,
   matchRuns,
   veteranDocuments,
   veteranPersonas
 } from "@boots2suits/db";
-import { QUEUE_NAMES, apiLogger } from "@boots2suits/shared";
+import {
+  QUEUE_NAMES,
+  apiLogger,
+  type AtsConnectorType,
+  type ConnectorSimulationMode
+} from "@boots2suits/shared";
 import { buildAuthMiddleware, type AuthenticatedRequest } from "../auth/middleware.js";
 import { env } from "../config/env.js";
 import {
   enqueueEmbeddingGenerationJob,
+  enqueueConnectorExportJob,
   enqueueMatchingRunJob,
   enqueueResumeParsingJob
 } from "./enqueue.js";
@@ -30,7 +37,14 @@ type AsyncOpsRouterOptions = {
 
 const listFailedJobsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
-  queue: z.enum([QUEUE_NAMES.resumeParsing, QUEUE_NAMES.matchingRuns, QUEUE_NAMES.embeddingGeneration]).optional()
+  queue: z
+    .enum([
+      QUEUE_NAMES.resumeParsing,
+      QUEUE_NAMES.matchingRuns,
+      QUEUE_NAMES.embeddingGeneration,
+      QUEUE_NAMES.connectorExports
+    ])
+    .optional()
 });
 
 const resumeReplayPayloadSchema = z.object({
@@ -48,6 +62,12 @@ const embeddingReplayPayloadSchema = z.object({
   targetType: z.enum(["veteran_persona", "job_persona"]),
   targetId: z.string().uuid(),
   sourceSnapshotHash: z.string().min(1)
+});
+const connectorReplayPayloadSchema = z.object({
+  exportId: z.string().uuid(),
+  connectorType: z.enum(["manual_handoff", "greenhouse_stub", "greenhouse", "lever", "workday"]),
+  requestedByUserId: z.string().uuid(),
+  simulationMode: z.enum(["success", "retryable_failure", "non_retryable_failure"]).default("success")
 });
 
 function getQueue(name: string) {
@@ -90,7 +110,8 @@ export function createAsyncOpsRouter(options: AsyncOpsRouterOptions) {
     const queues = await Promise.all([
       inspectQueue(QUEUE_NAMES.resumeParsing),
       inspectQueue(QUEUE_NAMES.matchingRuns),
-      inspectQueue(QUEUE_NAMES.embeddingGeneration)
+      inspectQueue(QUEUE_NAMES.embeddingGeneration),
+      inspectQueue(QUEUE_NAMES.connectorExports)
     ]);
 
     return res.json({
@@ -280,6 +301,45 @@ export function createAsyncOpsRouter(options: AsyncOpsRouterOptions) {
         {
           attempts: env.QUEUE_EMBEDDING_JOB_ATTEMPTS ?? env.QUEUE_JOB_ATTEMPTS,
           backoffMs: env.QUEUE_EMBEDDING_JOB_BACKOFF_MS ?? env.QUEUE_JOB_BACKOFF_MS
+        },
+        {
+          forceEnqueue: true,
+          jobIdSuffix: replaySuffix
+        }
+      );
+      replayedJobId = String(job.id);
+    } else if (deadLetter.queueName === QUEUE_NAMES.connectorExports) {
+      const parsedPayload = connectorReplayPayloadSchema.safeParse(deadLetter.payload);
+      if (!parsedPayload.success) {
+        return res.status(400).json({ ok: false, error: "Invalid connector export dead-letter payload." });
+      }
+      const payload = parsedPayload.data;
+
+      await options.db
+        .update(jobCandidateExports)
+        .set({
+          exportStatus: "queued",
+          connectorQueuedAt: new Date(),
+          connectorStartedAt: null,
+          connectorCompletedAt: null,
+          connectorFailedAt: null,
+          connectorDurationMs: null,
+          errorType: null,
+          errorMessage: null
+        })
+        .where(eq(jobCandidateExports.id, payload.exportId));
+
+      const job = await enqueueConnectorExportJob(
+        env.REDIS_URL,
+        {
+          exportId: payload.exportId,
+          connectorType: payload.connectorType as AtsConnectorType,
+          requestedByUserId: payload.requestedByUserId,
+          simulationMode: payload.simulationMode as ConnectorSimulationMode
+        },
+        {
+          attempts: env.QUEUE_CONNECTOR_JOB_ATTEMPTS ?? env.QUEUE_JOB_ATTEMPTS,
+          backoffMs: env.QUEUE_CONNECTOR_JOB_BACKOFF_MS ?? env.QUEUE_JOB_BACKOFF_MS
         },
         {
           forceEnqueue: true,

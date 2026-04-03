@@ -206,6 +206,18 @@ ATS export / recruiter handoff routes:
 - `POST /employer/jobs/:jobId/export`
 - `GET /employer/jobs/:jobId/exports`
 - `GET /employer/jobs/:jobId/exports/:exportId`
+- `GET /employer/exports/targets`
+- `GET /employer/connectors`
+- `PUT /employer/connectors/:connectorType`
+- `POST /employer/connectors/:connectorType/test`
+
+Export targets currently supported:
+
+- `manual_handoff`
+- `greenhouse_stub` (deterministic simulation stub)
+- `greenhouse` (prepared connector mode, simulated execution)
+- `lever` (prepared connector mode, simulated execution)
+- `workday` (prepared connector mode, simulated execution)
 
 Async reliability / ops routes (admin only):
 
@@ -296,7 +308,13 @@ npm run match:inspect --workspace @boots2suits/api -- veteran --veteranProfileId
   - `QUEUE_RESUME_JOB_ATTEMPTS`, `QUEUE_RESUME_JOB_BACKOFF_MS`
   - `QUEUE_MATCHING_JOB_ATTEMPTS`, `QUEUE_MATCHING_JOB_BACKOFF_MS`
   - `QUEUE_EMBEDDING_JOB_ATTEMPTS`, `QUEUE_EMBEDDING_JOB_BACKOFF_MS`
+  - `QUEUE_CONNECTOR_JOB_ATTEMPTS`, `QUEUE_CONNECTOR_JOB_BACKOFF_MS`
 - Terminal queue failures are persisted to `async_job_dead_letters` for replay/audit.
+- Connector exports now run with explicit status lifecycle:
+  - `queued`
+  - `processing`
+  - `exported`
+  - `failed`
 
 ## Debugging failed async jobs
 

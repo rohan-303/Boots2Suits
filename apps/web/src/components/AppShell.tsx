@@ -59,6 +59,9 @@ export function AppShell() {
               <Link className="font-medium text-slate-700 hover:text-amber-700" to="/app/employer/jobs">
                 Employer Jobs
               </Link>
+              <Link className="font-medium text-slate-700 hover:text-amber-700" to="/app/employer/connectors">
+                ATS Connectors
+              </Link>
             </>
           ) : null}
           {showAdmin ? (

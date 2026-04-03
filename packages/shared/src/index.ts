@@ -9,7 +9,8 @@ export type ServiceName = (typeof SERVICE_NAMES)[keyof typeof SERVICE_NAMES];
 export const QUEUE_NAMES = {
   resumeParsing: "resume-parsing",
   matchingRuns: "matching-runs",
-  embeddingGeneration: "embedding-generation"
+  embeddingGeneration: "embedding-generation",
+  connectorExports: "connector-exports"
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -31,4 +32,12 @@ export type EmbeddingGenerationJobPayload = {
   sourceSnapshotHash: string;
 };
 
+export type ConnectorExportJobPayload = {
+  exportId: string;
+  connectorType: "manual_handoff" | "greenhouse_stub" | "greenhouse" | "lever" | "workday";
+  requestedByUserId: string;
+  simulationMode: "success" | "retryable_failure" | "non_retryable_failure";
+};
+
 export * from "./observability.js";
+export * from "./ats.js";

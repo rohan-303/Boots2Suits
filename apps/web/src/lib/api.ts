@@ -2,6 +2,7 @@ import type { AuthUser, UserRole } from "../auth/types";
 import type {
   JobCandidateExportDetail,
   JobCandidateExportSummary,
+  EmployerConnectorConfig,
   EmployerJob,
   EmployerJobDetail,
   EmployerProfile,
@@ -314,8 +315,9 @@ export async function createEmployerJobExport(
   jobId: string,
   payload: {
     candidateProfileIds: string[];
-    exportTarget?: string;
+    exportTarget?: "manual_handoff" | "greenhouse_stub" | "greenhouse" | "lever" | "workday";
     exportFormat?: "json" | "csv";
+    connectorSimulationMode?: "success" | "retryable_failure" | "non_retryable_failure";
     externalSource?: string;
     externalId?: string;
   }
@@ -323,12 +325,61 @@ export async function createEmployerJobExport(
   return request<{
     ok: true;
     exportId: string;
-    status: "pending" | "exported" | "failed";
+    status: "queued" | "processing" | "exported" | "failed";
     candidateCount?: number;
     reused?: boolean;
+    connectorType?: "manual_handoff" | "greenhouse_stub" | "greenhouse" | "lever" | "workday";
+    externalId?: string | null;
+    connectorResponseSummary?: Record<string, unknown>;
   }>(`/employer/jobs/${jobId}/export`, {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+}
+
+export async function getEmployerConnectors() {
+  return request<{
+    ok: true;
+    companyId: string;
+    connectors: EmployerConnectorConfig[];
+  }>("/employer/connectors", { method: "GET" });
+}
+
+export async function saveEmployerConnectorConfig(
+  connectorType: "manual_handoff" | "greenhouse_stub" | "greenhouse" | "lever" | "workday",
+  payload: {
+    enabled: boolean;
+    environment: "sandbox" | "production";
+    baseUrl?: string;
+    authMode: "none" | "api_key_reference" | "oauth_placeholder";
+    credentialConfigured: boolean;
+    credentialReference?: string;
+    configMetadata?: Record<string, unknown>;
+    fieldMappings?: Record<string, unknown>;
+  }
+) {
+  return request<{
+    ok: true;
+    connector: EmployerConnectorConfig;
+  }>(`/employer/connectors/${connectorType}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function testEmployerConnector(
+  connectorType: "manual_handoff" | "greenhouse_stub" | "greenhouse" | "lever" | "workday",
+  simulationMode: "success" | "retryable_failure" | "non_retryable_failure" = "success"
+) {
+  return request<{
+    ok: boolean;
+    connectorType: string;
+    message: string;
+    simulationMode: string;
+    validation: { ok: boolean; errors: string[] };
+  }>(`/employer/connectors/${connectorType}/test`, {
+    method: "POST",
+    body: JSON.stringify({ simulationMode })
   });
 }
 

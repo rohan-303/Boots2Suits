@@ -69,15 +69,22 @@ export type JobPersona = {
 
 export type JobCandidateExportSummary = {
   id: string;
-  exportStatus: "pending" | "exported" | "failed";
+  exportStatus: "queued" | "processing" | "exported" | "failed";
+  connectorType: "manual_handoff" | "greenhouse_stub" | "greenhouse" | "lever" | "workday" | string;
   exportTarget: string;
   exportFormat: "json" | "csv" | string;
   externalSource: string | null;
   externalId: string | null;
+  connectorResponseSummary: Record<string, unknown> | null;
   candidateCount: number;
   exportedByUserId: string | null;
+  connectorQueuedAt: string | null;
+  connectorStartedAt: string | null;
+  connectorCompletedAt: string | null;
+  connectorFailedAt: string | null;
   createdAt: string;
   exportedAt: string | null;
+  errorType: string | null;
   errorMessage: string | null;
 };
 
@@ -94,7 +101,26 @@ export type JobCandidateExportItem = {
 export type JobCandidateExportDetail = {
   export: JobCandidateExportSummary & {
     payload: Record<string, unknown> | null;
+    connectorRequestPayload: Record<string, unknown> | null;
     jobId: string;
   };
   items: JobCandidateExportItem[];
+};
+
+export type EmployerConnectorConfig = {
+  id: string | null;
+  connectorType: "manual_handoff" | "greenhouse_stub" | "greenhouse" | "lever" | "workday";
+  enabled: boolean;
+  environment: "sandbox" | "production";
+  baseUrl: string | null;
+  authMode: "none" | "api_key_reference" | "oauth_placeholder";
+  credentialConfigured: boolean;
+  credentialReference: string | null;
+  configMetadata: Record<string, unknown> | null;
+  fieldMappings: Record<string, unknown> | null;
+  lastTestedAt: string | null;
+  lastTestStatus: "not_tested" | "passed" | "failed";
+  lastTestMessage: string | null;
+  lastTestResponse: Record<string, unknown> | null;
+  updatedAt: string | null;
 };

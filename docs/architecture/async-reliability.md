@@ -7,13 +7,15 @@ This foundation hardens async processing for:
 - resume parsing
 - matching runs
 - embedding generation
+- connector exports
 
 ## Idempotency Model
 
 - enqueue uses deterministic idempotency keys per work unit:
   - resume parse: `resume:<documentId>`
   - matching run: `matchrun:<matchRunId>`
-  - embedding: `embedding:<targetType>:<targetId>:<sourceSnapshotHash>`
+- embedding: `embedding:<targetType>:<targetId>:<sourceSnapshotHash>`
+- connector export: `connector-export:<exportId>`
 - if a job with the same key is already `waiting|active|delayed|prioritized|waiting-children`,
   enqueue is deduped and reuses the existing queued work.
 - replay uses forced enqueue with suffix (for example `:replay-<timestamp>`) to create a fresh execution attempt.
@@ -30,6 +32,7 @@ Per-job overrides:
 - `QUEUE_RESUME_JOB_ATTEMPTS`, `QUEUE_RESUME_JOB_BACKOFF_MS`
 - `QUEUE_MATCHING_JOB_ATTEMPTS`, `QUEUE_MATCHING_JOB_BACKOFF_MS`
 - `QUEUE_EMBEDDING_JOB_ATTEMPTS`, `QUEUE_EMBEDDING_JOB_BACKOFF_MS`
+- `QUEUE_CONNECTOR_JOB_ATTEMPTS`, `QUEUE_CONNECTOR_JOB_BACKOFF_MS`
 
 Retries use exponential backoff.
 

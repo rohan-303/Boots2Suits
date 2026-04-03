@@ -33,6 +33,8 @@ const envSchema = z.object({
   QUEUE_MATCHING_JOB_BACKOFF_MS: z.coerce.number().int().min(250).max(300000).optional(),
   QUEUE_EMBEDDING_JOB_ATTEMPTS: z.coerce.number().int().min(1).max(10).optional(),
   QUEUE_EMBEDDING_JOB_BACKOFF_MS: z.coerce.number().int().min(250).max(300000).optional(),
+  QUEUE_CONNECTOR_JOB_ATTEMPTS: z.coerce.number().int().min(1).max(10).optional(),
+  QUEUE_CONNECTOR_JOB_BACKOFF_MS: z.coerce.number().int().min(250).max(300000).optional(),
   QUEUE_REPLAY_MAX_PER_JOB: z.coerce.number().int().min(1).max(20).default(3)
 }).superRefine((env, ctx) => {
   const hybridTotal = env.MATCH_SEMANTIC_WEIGHT + env.MATCH_RULE_WEIGHT;

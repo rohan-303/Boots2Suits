@@ -92,6 +92,20 @@
       "when": 1774915800000,
       "tag": "0012_async_reliability_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1774919400000,
+      "tag": "0013_ats_connector_adapter_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1774923000000,
+      "tag": "0014_ats_connector_preparation_layer",
+      "breakpoints": true
     }
   ]
 }

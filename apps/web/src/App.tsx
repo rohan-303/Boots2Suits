@@ -13,6 +13,7 @@ import { EmployerJobPersonaPage } from "./pages/EmployerJobPersonaPage";
 import { EmployerJobsPage } from "./pages/EmployerJobsPage";
 import { EmployerOnboardingPage } from "./pages/EmployerOnboardingPage";
 import { EmployerProfilePage } from "./pages/EmployerProfilePage";
+import { EmployerConnectorsPage } from "./pages/EmployerConnectorsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { RoleRedirectPage } from "./pages/RoleRedirectPage";
 import { SignupPage } from "./pages/SignupPage";
@@ -52,6 +53,7 @@ export function App() {
                 <Route path="/app/employer/onboarding" element={<EmployerOnboardingPage />} />
                 <Route path="/app/employer" element={<EmployerDashboardPage />} />
                 <Route path="/app/employer/profile" element={<EmployerProfilePage />} />
+                <Route path="/app/employer/connectors" element={<EmployerConnectorsPage />} />
                 <Route path="/app/employer/jobs" element={<EmployerJobsPage />} />
                 <Route path="/app/employer/jobs/:jobId" element={<EmployerJobDetailPage />} />
                 <Route path="/app/employer/jobs/:jobId/matches" element={<EmployerJobMatchesPage />} />

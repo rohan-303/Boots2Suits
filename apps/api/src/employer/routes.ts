@@ -1,13 +1,22 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { Router } from "express";
 import { z } from "zod";
-import { apiLogger } from "@boots2suits/shared";
+import {
+  apiLogger,
+  type AtsConnectorAuthMode,
+  type AtsConnectorEnvironment,
+  type AtsConnectorTestStatus,
+  validateConnectorConfiguration
+} from "@boots2suits/shared";
+import { getAtsConnectorAdapter, supportedAtsConnectorTargets } from "../ats/adapters.js";
+import type { AtsConnectorTarget, ConnectorSimulationMode } from "../ats/types.js";
 import {
   applicationEvents,
   applications,
   candidateJobScoreFeatures,
   candidateJobScores,
+  companyAtsConnectors,
   companies,
   createDbClient,
   jobCandidateExportItems,
@@ -30,7 +39,7 @@ import {
 } from "../applications/service.js";
 import { buildAuthMiddleware, type AuthenticatedRequest } from "../auth/middleware.js";
 import { env } from "../config/env.js";
-import { enqueueEmbeddingGenerationJob } from "../queue/enqueue.js";
+import { enqueueConnectorExportJob, enqueueEmbeddingGenerationJob } from "../queue/enqueue.js";
 import { generateJobPersona } from "./persona.js";
 
 type Db = ReturnType<typeof createDbClient>["db"];
@@ -102,10 +111,32 @@ const createJobSchema = z
 
 const createExportSchema = z.object({
   candidateProfileIds: z.array(z.string().uuid()).min(1).max(50),
-  exportTarget: z.string().min(1).max(80).default("manual_handoff"),
+  exportTarget: z
+    .enum(["manual_handoff", "greenhouse_stub", "greenhouse", "lever", "workday"])
+    .default("manual_handoff"),
   exportFormat: z.enum(["json", "csv"]).default("json"),
+  connectorSimulationMode: z
+    .enum(["success", "retryable_failure", "non_retryable_failure"])
+    .default("success"),
   externalSource: z.string().min(1).max(80).optional(),
   externalId: z.string().min(1).max(120).optional()
+});
+
+const connectorConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  environment: z.enum(["sandbox", "production"]).default("sandbox"),
+  baseUrl: z.string().url().optional().or(z.literal("")),
+  authMode: z.enum(["none", "api_key_reference", "oauth_placeholder"]).default("api_key_reference"),
+  credentialConfigured: z.boolean().default(false),
+  credentialReference: z.string().max(200).optional().or(z.literal("")),
+  configMetadata: z.record(z.unknown()).optional(),
+  fieldMappings: z.record(z.unknown()).optional()
+});
+
+const connectorTestSchema = z.object({
+  simulationMode: z
+    .enum(["success", "retryable_failure", "non_retryable_failure"])
+    .default("success")
 });
 
 function toStringArray(value: unknown): string[] {
@@ -334,6 +365,18 @@ export function createEmployerRouter(options: EmployerRouterOptions) {
       .where(isAdmin ? eq(jobs.id, jobId) : and(eq(jobs.id, jobId), eq(companies.ownerUserId, authUserId)))
       .limit(1);
     return job ?? null;
+  }
+
+  async function getOwnedCompany(authUserId: string, isAdmin: boolean) {
+    const [company] = await options.db
+      .select({
+        id: companies.id
+      })
+      .from(companies)
+      .where(isAdmin ? sql`true` : eq(companies.ownerUserId, authUserId))
+      .orderBy(desc(companies.createdAt))
+      .limit(1);
+    return company ?? null;
   }
 
   async function buildExportCandidatePackets(input: {
@@ -1355,6 +1398,227 @@ export function createEmployerRouter(options: EmployerRouterOptions) {
         : null
     });
   });
+  router.get("/connectors", async (req: AuthenticatedRequest, res) => {
+    const authUser = req.authUser;
+    if (!authUser) {
+      return res.status(401).json({ ok: false, error: "Authentication required." });
+    }
+    const company = await getOwnedCompany(authUser.id, authUser.role === "admin");
+    if (!company) {
+      return res.status(404).json({ ok: false, error: "Company not found for connector settings." });
+    }
+    const rows = await options.db
+      .select({
+        id: companyAtsConnectors.id,
+        connectorType: companyAtsConnectors.connectorType,
+        enabled: companyAtsConnectors.enabled,
+        environment: companyAtsConnectors.environment,
+        baseUrl: companyAtsConnectors.baseUrl,
+        authMode: companyAtsConnectors.authMode,
+        credentialConfigured: companyAtsConnectors.credentialConfigured,
+        credentialReference: companyAtsConnectors.credentialReference,
+        configMetadata: companyAtsConnectors.configMetadata,
+        fieldMappings: companyAtsConnectors.fieldMappings,
+        lastTestedAt: companyAtsConnectors.lastTestedAt,
+        lastTestStatus: companyAtsConnectors.lastTestStatus,
+        lastTestMessage: companyAtsConnectors.lastTestMessage,
+        lastTestResponse: companyAtsConnectors.lastTestResponse,
+        updatedAt: companyAtsConnectors.updatedAt
+      })
+      .from(companyAtsConnectors)
+      .where(eq(companyAtsConnectors.companyId, company.id))
+      .orderBy(companyAtsConnectors.connectorType);
+    const byType = new Map(rows.map((row) => [row.connectorType, row]));
+    const connectors = supportedAtsConnectorTargets().map((target) => {
+      const existing = byType.get(target);
+      return (
+        existing ?? {
+          id: null,
+          connectorType: target,
+          enabled: false,
+          environment: "sandbox",
+          baseUrl: null,
+          authMode: "api_key_reference",
+          credentialConfigured: false,
+          credentialReference: null,
+          configMetadata: null,
+          fieldMappings: null,
+          lastTestedAt: null,
+          lastTestStatus: "not_tested",
+          lastTestMessage: null,
+          lastTestResponse: null,
+          updatedAt: null
+        }
+      );
+    });
+    return res.json({
+      ok: true,
+      companyId: company.id,
+      connectors
+    });
+  });
+
+  router.put("/connectors/:connectorType", async (req: AuthenticatedRequest, res) => {
+    const authUser = req.authUser;
+    if (!authUser) {
+      return res.status(401).json({ ok: false, error: "Authentication required." });
+    }
+    const connectorType = req.params.connectorType as AtsConnectorTarget;
+    if (!supportedAtsConnectorTargets().includes(connectorType)) {
+      return res.status(400).json({ ok: false, error: "Unsupported connector type." });
+    }
+    const parsed = connectorConfigSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ ok: false, error: "Invalid connector config payload." });
+    }
+    const company = await getOwnedCompany(authUser.id, authUser.role === "admin");
+    if (!company) {
+      return res.status(404).json({ ok: false, error: "Company not found for connector settings." });
+    }
+    const data = parsed.data;
+    const now = new Date();
+    const [row] = await options.db
+      .insert(companyAtsConnectors)
+      .values({
+        companyId: company.id,
+        connectorType,
+        enabled: data.enabled,
+        environment: data.environment as AtsConnectorEnvironment,
+        baseUrl: data.baseUrl || null,
+        authMode: data.authMode as AtsConnectorAuthMode,
+        credentialConfigured: data.credentialConfigured,
+        credentialReference: data.credentialReference || null,
+        configMetadata: data.configMetadata ?? null,
+        fieldMappings: data.fieldMappings ?? null,
+        updatedByUserId: authUser.id,
+        createdByUserId: authUser.id,
+        updatedAt: now
+      })
+      .onConflictDoUpdate({
+        target: [companyAtsConnectors.companyId, companyAtsConnectors.connectorType],
+        set: {
+          enabled: data.enabled,
+          environment: data.environment as AtsConnectorEnvironment,
+          baseUrl: data.baseUrl || null,
+          authMode: data.authMode as AtsConnectorAuthMode,
+          credentialConfigured: data.credentialConfigured,
+          credentialReference: data.credentialReference || null,
+          configMetadata: data.configMetadata ?? null,
+          fieldMappings: data.fieldMappings ?? null,
+          updatedByUserId: authUser.id,
+          updatedAt: now
+        }
+      })
+      .returning({
+        id: companyAtsConnectors.id,
+        connectorType: companyAtsConnectors.connectorType,
+        enabled: companyAtsConnectors.enabled,
+        environment: companyAtsConnectors.environment,
+        baseUrl: companyAtsConnectors.baseUrl,
+        authMode: companyAtsConnectors.authMode,
+        credentialConfigured: companyAtsConnectors.credentialConfigured,
+        credentialReference: companyAtsConnectors.credentialReference,
+        configMetadata: companyAtsConnectors.configMetadata,
+        fieldMappings: companyAtsConnectors.fieldMappings,
+        lastTestedAt: companyAtsConnectors.lastTestedAt,
+        lastTestStatus: companyAtsConnectors.lastTestStatus,
+        updatedAt: companyAtsConnectors.updatedAt
+      });
+    return res.json({
+      ok: true,
+      connector: row
+    });
+  });
+
+  router.post("/connectors/:connectorType/test", async (req: AuthenticatedRequest, res) => {
+    const authUser = req.authUser;
+    if (!authUser) {
+      return res.status(401).json({ ok: false, error: "Authentication required." });
+    }
+    const connectorType = req.params.connectorType as AtsConnectorTarget;
+    if (!supportedAtsConnectorTargets().includes(connectorType)) {
+      return res.status(400).json({ ok: false, error: "Unsupported connector type." });
+    }
+    const parsed = connectorTestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ ok: false, error: "Invalid connector test payload." });
+    }
+    const company = await getOwnedCompany(authUser.id, authUser.role === "admin");
+    if (!company) {
+      return res.status(404).json({ ok: false, error: "Company not found for connector settings." });
+    }
+    const [connector] = await options.db
+      .select({
+        id: companyAtsConnectors.id,
+        connectorType: companyAtsConnectors.connectorType,
+        enabled: companyAtsConnectors.enabled,
+        environment: companyAtsConnectors.environment,
+        baseUrl: companyAtsConnectors.baseUrl,
+        authMode: companyAtsConnectors.authMode,
+        credentialConfigured: companyAtsConnectors.credentialConfigured,
+        credentialReference: companyAtsConnectors.credentialReference,
+        configMetadata: companyAtsConnectors.configMetadata,
+        fieldMappings: companyAtsConnectors.fieldMappings
+      })
+      .from(companyAtsConnectors)
+      .where(
+        and(
+          eq(companyAtsConnectors.companyId, company.id),
+          eq(companyAtsConnectors.connectorType, connectorType)
+        )
+      )
+      .limit(1);
+    const validation = validateConnectorConfiguration({
+      connectorType,
+      connectorConfig: connector
+        ? {
+            connectorType: connector.connectorType,
+            enabled: connector.enabled,
+            environment: connector.environment as AtsConnectorEnvironment,
+            baseUrl: connector.baseUrl,
+            authMode: connector.authMode as AtsConnectorAuthMode,
+            credentialConfigured: connector.credentialConfigured,
+            credentialReference: connector.credentialReference,
+            configMetadata:
+              connector.configMetadata && typeof connector.configMetadata === "object"
+                ? (connector.configMetadata as Record<string, unknown>)
+                : null,
+            fieldMappings:
+              connector.fieldMappings && typeof connector.fieldMappings === "object"
+                ? (connector.fieldMappings as Record<string, unknown>)
+                : null
+          }
+        : null
+    });
+    const now = new Date();
+    const status: AtsConnectorTestStatus = validation.ok ? "passed" : "failed";
+    const message = validation.ok
+      ? `Connector validation passed (${parsed.data.simulationMode}).`
+      : validation.errors.join(" ");
+    if (connector) {
+      await options.db
+        .update(companyAtsConnectors)
+        .set({
+          lastTestedAt: now,
+          lastTestStatus: status,
+          lastTestMessage: message,
+          lastTestResponse: {
+            simulationMode: parsed.data.simulationMode,
+            validation
+          },
+          updatedByUserId: authUser.id,
+          updatedAt: now
+        })
+        .where(eq(companyAtsConnectors.id, connector.id));
+    }
+    return res.status(validation.ok ? 200 : 422).json({
+      ok: validation.ok,
+      connectorType,
+      validation,
+      simulationMode: parsed.data.simulationMode,
+      message
+    });
+  });
 
   router.post("/jobs/:jobId/export", async (req: AuthenticatedRequest, res) => {
     const authUser = req.authUser;
@@ -1371,6 +1635,13 @@ export function createEmployerRouter(options: EmployerRouterOptions) {
     const parsed = createExportSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ ok: false, error: "Invalid export payload." });
+    }
+    const adapter = getAtsConnectorAdapter(parsed.data.exportTarget);
+    if (!adapter) {
+      return res.status(400).json({
+        ok: false,
+        error: `Unsupported export target. Supported: ${supportedAtsConnectorTargets().join(", ")}`
+      });
     }
 
     const candidateProfileIds = [...new Set(parsed.data.candidateProfileIds)];
@@ -1395,7 +1666,8 @@ export function createEmployerRouter(options: EmployerRouterOptions) {
           candidateProfileIds: [...candidateProfileIds].sort(),
           exportTarget: parsed.data.exportTarget,
           exportFormat: parsed.data.exportFormat,
-          externalSource: parsed.data.externalSource ?? null
+          externalSource: parsed.data.externalSource ?? null,
+          connectorSimulationMode: parsed.data.connectorSimulationMode
         })
       )
       .digest("hex");
@@ -1428,116 +1700,266 @@ export function createEmployerRouter(options: EmployerRouterOptions) {
       });
     }
 
+    const [companyConnector] = await options.db
+      .select({
+        id: companyAtsConnectors.id,
+        connectorType: companyAtsConnectors.connectorType,
+        enabled: companyAtsConnectors.enabled,
+        environment: companyAtsConnectors.environment,
+        baseUrl: companyAtsConnectors.baseUrl,
+        authMode: companyAtsConnectors.authMode,
+        credentialConfigured: companyAtsConnectors.credentialConfigured,
+        credentialReference: companyAtsConnectors.credentialReference,
+        configMetadata: companyAtsConnectors.configMetadata,
+        fieldMappings: companyAtsConnectors.fieldMappings
+      })
+      .from(companyAtsConnectors)
+      .where(
+        and(
+          eq(companyAtsConnectors.companyId, job.companyId),
+          eq(companyAtsConnectors.connectorType, parsed.data.exportTarget)
+        )
+      )
+      .limit(1);
+
+    const connectorConfig =
+      companyConnector && parsed.data.exportTarget !== "manual_handoff"
+        ? {
+            connectorType: companyConnector.connectorType,
+            enabled: companyConnector.enabled,
+            environment: companyConnector.environment as AtsConnectorEnvironment,
+            baseUrl: companyConnector.baseUrl,
+            authMode: companyConnector.authMode as AtsConnectorAuthMode,
+            credentialConfigured: companyConnector.credentialConfigured,
+            credentialReference: companyConnector.credentialReference,
+            configMetadata:
+              companyConnector.configMetadata && typeof companyConnector.configMetadata === "object"
+                ? (companyConnector.configMetadata as Record<string, unknown>)
+                : null,
+            fieldMappings:
+              companyConnector.fieldMappings && typeof companyConnector.fieldMappings === "object"
+                ? (companyConnector.fieldMappings as Record<string, unknown>)
+                : null
+          }
+        : null;
+
+    const configValidation = validateConnectorConfiguration({
+      connectorType: parsed.data.exportTarget,
+      connectorConfig
+    });
+    if (!configValidation.ok) {
+      return res.status(422).json({
+        ok: false,
+        error: `Connector configuration invalid: ${configValidation.errors.join(" ")}`
+      });
+    }
+
     const now = new Date();
+    const csvRows = [
+      [
+        "candidate_name",
+        "headline",
+        "job_title",
+        "match_score",
+        "rank",
+        "application_status",
+        "why_recommended",
+        "standout_strengths",
+        "follow_up_gaps",
+        "suggested_roles"
+      ].join(","),
+      ...packets.map((item) =>
+        [
+          csvEscape(item.packet.candidate.fullName),
+          csvEscape(item.packet.candidate.headline),
+          csvEscape(jobContext.title),
+          csvEscape(item.packet.match?.score ?? ""),
+          csvEscape(item.packet.match?.rank ?? ""),
+          csvEscape(item.packet.application?.status ?? "none"),
+          csvEscape(item.packet.handoffSummary.whyRecommended),
+          csvEscape(item.packet.handoffSummary.standoutStrengths.join(" | ")),
+          csvEscape(item.packet.handoffSummary.followUpGaps.join(" | ")),
+          csvEscape(item.packet.candidate.suggestedCivilianRoles.join(" | "))
+        ].join(",")
+      )
+    ];
+    const csvContent = csvRows.join("\n");
+
+    const payload = {
+      meta: {
+        exportId: "",
+        exportTarget: parsed.data.exportTarget as AtsConnectorTarget,
+        exportFormat: parsed.data.exportFormat,
+        externalSource: parsed.data.externalSource ?? null,
+        candidateCount: packets.length,
+        generatedAt: now.toISOString()
+      },
+      job: {
+        id: jobContext.id,
+        title: jobContext.title,
+        department: jobContext.department
+      },
+      recruiterHandoffPackets: packets.map((item) => item.packet),
+      csvContent: parsed.data.exportFormat === "csv" ? csvContent : null
+    };
+
     const [createdExport] = await options.db
       .insert(jobCandidateExports)
       .values({
         jobId,
-        exportStatus: "pending",
+        exportStatus: "queued",
+        companyConnectorId: companyConnector?.id ?? null,
+        connectorType: parsed.data.exportTarget,
         exportTarget: parsed.data.exportTarget,
         exportFormat: parsed.data.exportFormat,
         requestFingerprint,
-        externalSource: parsed.data.externalSource ?? null,
+        externalSource: parsed.data.externalSource ?? parsed.data.exportTarget,
         externalId: parsed.data.externalId ?? null,
         exportedByUserId: authUser.id,
         candidateCount: packets.length,
+        payload,
+        connectorQueuedAt: now,
         createdAt: now
       })
       .returning({ id: jobCandidateExports.id });
 
-    try {
-      const csvRows = [
-        [
-          "candidate_name",
-          "headline",
-          "job_title",
-          "match_score",
-          "rank",
-          "application_status",
-          "why_recommended",
-          "standout_strengths",
-          "follow_up_gaps",
-          "suggested_roles"
-        ].join(","),
-        ...packets.map((item) =>
-          [
-            csvEscape(item.packet.candidate.fullName),
-            csvEscape(item.packet.candidate.headline),
-            csvEscape(jobContext.title),
-            csvEscape(item.packet.match?.score ?? ""),
-            csvEscape(item.packet.match?.rank ?? ""),
-            csvEscape(item.packet.application?.status ?? "none"),
-            csvEscape(item.packet.handoffSummary.whyRecommended),
-            csvEscape(item.packet.handoffSummary.standoutStrengths.join(" | ")),
-            csvEscape(item.packet.handoffSummary.followUpGaps.join(" | ")),
-            csvEscape(item.packet.candidate.suggestedCivilianRoles.join(" | "))
-          ].join(",")
-        )
-      ];
-      const csvContent = csvRows.join("\n");
+    payload.meta.exportId = createdExport.id;
+    const connectorInput = {
+      context: {
+        exportId: createdExport.id,
+        jobId,
+        exportFormat: parsed.data.exportFormat,
+        requestFingerprint,
+        requestedByUserId: authUser.id
+      },
+      exportPackage: payload,
+      simulationMode: parsed.data.connectorSimulationMode as ConnectorSimulationMode,
+      connectorConfig
+    };
+    const connectorRequestPayload = adapter.prepareRequest(connectorInput);
 
-      await options.db.insert(jobCandidateExportItems).values(
-        packets.map((item) => ({
-          exportId: createdExport.id,
-          veteranProfileId: item.veteranProfileId,
-          applicationId: item.applicationId,
-          matchRunId: item.matchRunId,
-          matchScore: item.matchScore?.toFixed(6) ?? null,
-          rank: item.rank,
-          payload: item.packet
-        }))
-      );
+    await options.db
+      .update(jobCandidateExports)
+      .set({
+        payload,
+        connectorRequestPayload
+      })
+      .where(eq(jobCandidateExports.id, createdExport.id));
 
-      const payload = {
-        meta: {
+    await options.db.insert(jobCandidateExportItems).values(
+      packets.map((item) => ({
+        exportId: createdExport.id,
+        veteranProfileId: item.veteranProfileId,
+        applicationId: item.applicationId,
+        matchRunId: item.matchRunId,
+        matchScore: item.matchScore?.toFixed(6) ?? null,
+        rank: item.rank,
+        payload: item.packet
+      }))
+    );
+
+    if (parsed.data.exportTarget === "manual_handoff") {
+      try {
+        const connectorResult = await adapter.sendExport(connectorInput);
+        await options.db
+          .update(jobCandidateExports)
+          .set({
+            exportStatus: "exported",
+            connectorStartedAt: now,
+            connectorCompletedAt: new Date(),
+            connectorAttempts: 1,
+            connectorRetryCount: 0,
+            connectorDurationMs: Date.now() - now.getTime(),
+            connectorResponseSummary: connectorResult.responseSummary,
+            externalSource: connectorResult.externalSource,
+            externalId: connectorResult.externalId,
+            exportedAt: new Date(),
+            errorType: null,
+            errorMessage: null
+          })
+          .where(eq(jobCandidateExports.id, createdExport.id));
+        return res.status(201).json({
+          ok: true,
           exportId: createdExport.id,
-          exportTarget: parsed.data.exportTarget,
-          exportFormat: parsed.data.exportFormat,
-          externalSource: parsed.data.externalSource ?? null,
+          status: "exported",
           candidateCount: packets.length,
-          generatedAt: now.toISOString()
-        },
-        job: {
-          id: jobContext.id,
-          title: jobContext.title,
-          department: jobContext.department
-        },
-        recruiterHandoffPackets: packets.map((item) => item.packet),
-        csvContent: parsed.data.exportFormat === "csv" ? csvContent : null
-      };
+          connectorType: parsed.data.exportTarget,
+          externalId: connectorResult.externalId,
+          connectorResponseSummary: connectorResult.responseSummary
+        });
+      } catch (error) {
+        const normalized = adapter.normalizeError(error);
+        await options.db
+          .update(jobCandidateExports)
+          .set({
+            exportStatus: "failed",
+            connectorFailedAt: new Date(),
+            errorType: normalized.errorType,
+            errorMessage: normalized.errorMessage,
+            connectorResponseSummary: normalized.details
+              ? { status: "failed", ...normalized.details }
+              : { status: "failed" }
+          })
+          .where(eq(jobCandidateExports.id, createdExport.id));
+        return res.status(normalized.retryable ? 503 : 422).json({
+          ok: false,
+          exportId: createdExport.id,
+          retryable: normalized.retryable,
+          error: normalized.retryable
+            ? "Connector export failed due to a retryable issue."
+            : "Connector export failed due to a non-retryable validation issue."
+        });
+      }
+    }
 
-      await options.db
-        .update(jobCandidateExports)
-        .set({
-          exportStatus: "exported",
-          payload,
-          exportedAt: now,
-          errorMessage: null
-        })
-        .where(eq(jobCandidateExports.id, createdExport.id));
-
-      return res.status(201).json({
+    try {
+      await enqueueConnectorExportJob(
+        env.REDIS_URL,
+        {
+          exportId: createdExport.id,
+          connectorType: parsed.data.exportTarget,
+          requestedByUserId: authUser.id,
+          simulationMode: parsed.data.connectorSimulationMode
+        },
+        {
+          attempts: env.QUEUE_CONNECTOR_JOB_ATTEMPTS ?? env.QUEUE_JOB_ATTEMPTS,
+          backoffMs: env.QUEUE_CONNECTOR_JOB_BACKOFF_MS ?? env.QUEUE_JOB_BACKOFF_MS
+        }
+      );
+      return res.status(202).json({
         ok: true,
         exportId: createdExport.id,
-        status: "exported",
-        candidateCount: packets.length
+        status: "queued",
+        candidateCount: packets.length,
+        connectorType: parsed.data.exportTarget
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to generate export payload.";
+      const normalized = adapter.normalizeError(error);
       await options.db
         .update(jobCandidateExports)
         .set({
           exportStatus: "failed",
-          exportedAt: new Date(),
-          errorMessage: message
+          connectorFailedAt: new Date(),
+          errorType: normalized.errorType,
+          errorMessage: normalized.errorMessage,
+          connectorResponseSummary: normalized.details
+            ? { status: "failed", ...normalized.details }
+            : { status: "failed" }
         })
         .where(eq(jobCandidateExports.id, createdExport.id));
-
       return res.status(500).json({
         ok: false,
-        error: "Export failed. Please retry."
+        exportId: createdExport.id,
+        error: "Failed to enqueue connector export job."
       });
     }
+  });
+
+  router.get("/exports/targets", (_req: AuthenticatedRequest, res) => {
+    return res.json({
+      ok: true,
+      targets: supportedAtsConnectorTargets()
+    });
   });
 
   router.get("/jobs/:jobId/exports", async (req: AuthenticatedRequest, res) => {
@@ -1556,14 +1978,21 @@ export function createEmployerRouter(options: EmployerRouterOptions) {
       .select({
         id: jobCandidateExports.id,
         exportStatus: jobCandidateExports.exportStatus,
+        connectorType: jobCandidateExports.connectorType,
         exportTarget: jobCandidateExports.exportTarget,
         exportFormat: jobCandidateExports.exportFormat,
         externalSource: jobCandidateExports.externalSource,
         externalId: jobCandidateExports.externalId,
+        connectorResponseSummary: jobCandidateExports.connectorResponseSummary,
         candidateCount: jobCandidateExports.candidateCount,
         exportedByUserId: jobCandidateExports.exportedByUserId,
+        connectorQueuedAt: jobCandidateExports.connectorQueuedAt,
+        connectorStartedAt: jobCandidateExports.connectorStartedAt,
+        connectorCompletedAt: jobCandidateExports.connectorCompletedAt,
+        connectorFailedAt: jobCandidateExports.connectorFailedAt,
         createdAt: jobCandidateExports.createdAt,
         exportedAt: jobCandidateExports.exportedAt,
+        errorType: jobCandidateExports.errorType,
         errorMessage: jobCandidateExports.errorMessage
       })
       .from(jobCandidateExports)
@@ -1594,15 +2023,23 @@ export function createEmployerRouter(options: EmployerRouterOptions) {
         id: jobCandidateExports.id,
         jobId: jobCandidateExports.jobId,
         exportStatus: jobCandidateExports.exportStatus,
+        connectorType: jobCandidateExports.connectorType,
         exportTarget: jobCandidateExports.exportTarget,
         exportFormat: jobCandidateExports.exportFormat,
+        connectorRequestPayload: jobCandidateExports.connectorRequestPayload,
+        connectorResponseSummary: jobCandidateExports.connectorResponseSummary,
         externalSource: jobCandidateExports.externalSource,
         externalId: jobCandidateExports.externalId,
         candidateCount: jobCandidateExports.candidateCount,
         exportedByUserId: jobCandidateExports.exportedByUserId,
         payload: jobCandidateExports.payload,
+        connectorQueuedAt: jobCandidateExports.connectorQueuedAt,
+        connectorStartedAt: jobCandidateExports.connectorStartedAt,
+        connectorCompletedAt: jobCandidateExports.connectorCompletedAt,
+        connectorFailedAt: jobCandidateExports.connectorFailedAt,
         createdAt: jobCandidateExports.createdAt,
         exportedAt: jobCandidateExports.exportedAt,
+        errorType: jobCandidateExports.errorType,
         errorMessage: jobCandidateExports.errorMessage
       })
       .from(jobCandidateExports)

@@ -109,11 +109,34 @@ export const matchRunStatusEnum = pgEnum("match_run_status", [
   "completed",
   "failed"
 ]);
-export const exportStatusEnum = pgEnum("export_status", ["pending", "exported", "failed"]);
+export const exportStatusEnum = pgEnum("export_status", [
+  "queued",
+  "processing",
+  "exported",
+  "failed"
+]);
 export const asyncDeadLetterStatusEnum = pgEnum("async_dead_letter_status", [
   "failed",
   "replayed",
   "resolved"
+]);
+export const atsConnectorTypeEnum = pgEnum("ats_connector_type", [
+  "manual_handoff",
+  "greenhouse_stub",
+  "greenhouse",
+  "lever",
+  "workday"
+]);
+export const atsConnectorEnvEnum = pgEnum("ats_connector_environment", ["sandbox", "production"]);
+export const atsConnectorAuthModeEnum = pgEnum("ats_connector_auth_mode", [
+  "none",
+  "api_key_reference",
+  "oauth_placeholder"
+]);
+export const atsConnectorTestStatusEnum = pgEnum("ats_connector_test_status", [
+  "not_tested",
+  "passed",
+  "failed"
 ]);
 
 export const users = pgTable(
@@ -236,6 +259,44 @@ export const militaryOccupations = pgTable(
     ),
     militaryOccupationCodeIdx: index("idx_military_occupations_mos_code").on(table.mosCode),
     militaryOccupationTitleIdx: index("idx_military_occupations_mos_title").on(table.mosTitle)
+  })
+);
+
+export const companyAtsConnectors = pgTable(
+  "company_ats_connectors",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    connectorType: atsConnectorTypeEnum("connector_type").notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+    environment: atsConnectorEnvEnum("environment").notNull().default("sandbox"),
+    baseUrl: text("base_url"),
+    authMode: atsConnectorAuthModeEnum("auth_mode").notNull().default("api_key_reference"),
+    credentialConfigured: boolean("credential_configured").notNull().default(false),
+    credentialReference: text("credential_reference"),
+    configMetadata: jsonb("config_metadata"),
+    fieldMappings: jsonb("field_mappings"),
+    lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
+    lastTestStatus: atsConnectorTestStatusEnum("last_test_status").notNull().default("not_tested"),
+    lastTestMessage: text("last_test_message"),
+    lastTestResponse: jsonb("last_test_response"),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    updatedByUserId: uuid("updated_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({
+    companyAtsConnectorsCompanyIdx: index("idx_company_ats_connectors_company_id").on(table.companyId),
+    companyAtsConnectorsTypeIdx: index("idx_company_ats_connectors_connector_type").on(
+      table.connectorType
+    ),
+    companyAtsConnectorsEnabledIdx: index("idx_company_ats_connectors_enabled").on(table.enabled),
+    companyAtsConnectorsUnique: unique("company_ats_connectors_company_type_unique").on(
+      table.companyId,
+      table.connectorType
+    )
   })
 );
 
@@ -648,10 +709,16 @@ export const jobCandidateExports = pgTable(
     jobId: uuid("job_id")
       .notNull()
       .references(() => jobs.id, { onDelete: "cascade" }),
-    exportStatus: exportStatusEnum("export_status").notNull().default("pending"),
+    exportStatus: exportStatusEnum("export_status").notNull().default("queued"),
+    companyConnectorId: uuid("company_connector_id").references(() => companyAtsConnectors.id, {
+      onDelete: "set null"
+    }),
+    connectorType: text("connector_type").notNull().default("manual_handoff"),
     exportTarget: text("export_target").notNull().default("manual_handoff"),
     exportFormat: text("export_format").notNull().default("json"),
     requestFingerprint: text("request_fingerprint"),
+    connectorRequestPayload: jsonb("connector_request_payload"),
+    connectorResponseSummary: jsonb("connector_response_summary"),
     externalSource: text("external_source"),
     externalId: text("external_id"),
     exportedByUserId: uuid("exported_by_user_id").references(() => users.id, {
@@ -659,18 +726,45 @@ export const jobCandidateExports = pgTable(
     }),
     candidateCount: integer("candidate_count").notNull().default(0),
     payload: jsonb("payload"),
+    errorType: text("error_type"),
     errorMessage: text("error_message"),
+    connectorQueuedAt: timestamp("connector_queued_at", { withTimezone: true }),
+    connectorStartedAt: timestamp("connector_started_at", { withTimezone: true }),
+    connectorCompletedAt: timestamp("connector_completed_at", { withTimezone: true }),
+    connectorFailedAt: timestamp("connector_failed_at", { withTimezone: true }),
+    connectorAttempts: integer("connector_attempts").notNull().default(0),
+    connectorRetryCount: integer("connector_retry_count").notNull().default(0),
+    connectorLastRetriedAt: timestamp("connector_last_retried_at", { withTimezone: true }),
+    connectorDurationMs: integer("connector_duration_ms"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     exportedAt: timestamp("exported_at", { withTimezone: true })
   },
   (table) => ({
     jobCandidateExportsJobIdx: index("idx_job_candidate_exports_job_id").on(table.jobId),
     jobCandidateExportsStatusIdx: index("idx_job_candidate_exports_status").on(table.exportStatus),
+    jobCandidateExportsConnectorTypeIdx: index("idx_job_candidate_exports_connector_type").on(
+      table.connectorType
+    ),
+    jobCandidateExportsCompanyConnectorIdx: index("idx_job_candidate_exports_company_connector_id").on(
+      table.companyConnectorId
+    ),
     jobCandidateExportsByUserIdx: index("idx_job_candidate_exports_exported_by_user_id").on(
       table.exportedByUserId
     ),
     jobCandidateExportsFingerprintIdx: index("idx_job_candidate_exports_request_fingerprint").on(
       table.requestFingerprint
+    ),
+    jobCandidateExportsDurationNonNegative: check(
+      "job_candidate_exports_connector_duration_nonnegative",
+      sql`${table.connectorDurationMs} IS NULL OR ${table.connectorDurationMs} >= 0`
+    ),
+    jobCandidateExportsAttemptsNonNegative: check(
+      "job_candidate_exports_connector_attempts_nonnegative",
+      sql`${table.connectorAttempts} >= 0`
+    ),
+    jobCandidateExportsRetryCountNonNegative: check(
+      "job_candidate_exports_connector_retry_count_nonnegative",
+      sql`${table.connectorRetryCount} >= 0`
     )
   })
 );

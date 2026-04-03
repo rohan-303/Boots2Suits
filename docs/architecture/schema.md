@@ -73,6 +73,11 @@ This schema supports the MVP-critical data model for:
 - `job_candidate_exports`
   - recruiter handoff/export batch records by job
   - tracks export status/target/format/fingerprint/exported_by/candidate_count/payload
+  - connector metadata: `connector_type`, `connector_request_payload`, `connector_response_summary`,
+    `external_source`, `external_id`, `error_type`, `error_message`
+  - connector lifecycle metadata: `connector_queued_at`, `connector_started_at`,
+    `connector_completed_at`, `connector_failed_at`, `connector_attempts`,
+    `connector_retry_count`, `connector_last_retried_at`, `connector_duration_ms`
 - `job_candidate_export_items`
   - candidate-level records inside each export batch
   - stores per-candidate handoff packet payload + match/application references
@@ -105,8 +110,12 @@ This schema supports the MVP-critical data model for:
 - `resume_parse_status`: `pending`, `processing`, `completed`, `failed`
 - `embedding_status`: `pending`, `processing`, `completed`, `failed`
 - `match_run_status`: `queued`, `running`, `completed`, `failed`
-- `export_status`: `pending`, `exported`, `failed`
+- `export_status`: `queued`, `processing`, `exported`, `failed`
 - `async_dead_letter_status`: `failed`, `replayed`, `resolved`
+- `ats_connector_type`: `manual_handoff`, `greenhouse_stub`, `greenhouse`, `lever`, `workday`
+- `ats_connector_environment`: `sandbox`, `production`
+- `ats_connector_auth_mode`: `none`, `api_key_reference`, `oauth_placeholder`
+- `ats_connector_test_status`: `not_tested`, `passed`, `failed`
 
 ## Provenance and Explainability
 
@@ -167,6 +176,8 @@ The schema enforces low-risk/high-value checks:
 - `packages/db/drizzle/0010_embeddings_status_and_hybrid_foundation.sql`
 - `packages/db/drizzle/0011_ats_export_foundation.sql`
 - `packages/db/drizzle/0012_async_reliability_hardening.sql`
+- `packages/db/drizzle/0013_ats_connector_adapter_foundation.sql`
+- `packages/db/drizzle/0014_ats_connector_preparation_layer.sql`
 - `packages/db/drizzle/meta/_journal.json`
 
 ## Commands
@@ -182,3 +193,7 @@ npm run db:seed
 Seed script location:
 
 - `packages/db/src/seed.ts`
+- `company_ats_connectors`
+  - per-company ATS connector configuration and readiness metadata
+  - stores connector type, enabled/environment/auth placeholders, credential reference state,
+    mapping metadata, and last-test result fields

@@ -57,6 +57,9 @@ export function EmployerDashboardPage() {
         <Link className="font-semibold text-amber-700 underline" to="/app/employer/jobs">
           Manage Jobs
         </Link>
+        <Link className="font-semibold text-amber-700 underline" to="/app/employer/connectors">
+          ATS Connectors
+        </Link>
       </div>
       <p className="mt-3 text-sm text-slate-600">
         Open a job and run matching to generate ranked candidates with explanations.

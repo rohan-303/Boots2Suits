@@ -45,7 +45,8 @@ async function main() {
   const results = await Promise.all([
     inspectQueue(QUEUE_NAMES.resumeParsing, env.REDIS_URL),
     inspectQueue(QUEUE_NAMES.matchingRuns, env.REDIS_URL),
-    inspectQueue(QUEUE_NAMES.embeddingGeneration, env.REDIS_URL)
+    inspectQueue(QUEUE_NAMES.embeddingGeneration, env.REDIS_URL),
+    inspectQueue(QUEUE_NAMES.connectorExports, env.REDIS_URL)
   ]);
   const recentDeadLetters = await db
     .select({

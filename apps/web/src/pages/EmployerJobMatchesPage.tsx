@@ -36,7 +36,12 @@ export function EmployerJobMatchesPage() {
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
   const [exportFormat, setExportFormat] = useState<"json" | "csv">("json");
-  const [exportTarget, setExportTarget] = useState("manual_handoff");
+  const [exportTarget, setExportTarget] = useState<
+    "manual_handoff" | "greenhouse_stub" | "greenhouse" | "lever" | "workday"
+  >("manual_handoff");
+  const [connectorSimulationMode, setConnectorSimulationMode] = useState<
+    "success" | "retryable_failure" | "non_retryable_failure"
+  >("success");
   const [exportsHistory, setExportsHistory] = useState<JobCandidateExportSummary[]>([]);
   const [selectedExportDetail, setSelectedExportDetail] = useState<JobCandidateExportDetail | null>(null);
   const [loadingExportDetailId, setLoadingExportDetailId] = useState<string | null>(null);
@@ -138,7 +143,8 @@ export function EmployerJobMatchesPage() {
     const result = await createEmployerJobExport(jobId, {
       candidateProfileIds: selectedCandidateIds,
       exportFormat,
-      exportTarget
+      exportTarget,
+      connectorSimulationMode
     });
     setExporting(false);
     if (!result.ok) {
@@ -228,12 +234,44 @@ export function EmployerJobMatchesPage() {
               <option value="csv">CSV</option>
             </select>
             <label className="text-slate-700">Target</label>
-            <input
+            <select
               value={exportTarget}
-              onChange={(event) => setExportTarget(event.target.value)}
+              onChange={(event) =>
+                setExportTarget(
+                  event.target.value as
+                    | "manual_handoff"
+                    | "greenhouse_stub"
+                    | "greenhouse"
+                    | "lever"
+                    | "workday"
+                )
+              }
               className="rounded border border-slate-300 px-2 py-1"
-              placeholder="manual_handoff"
-            />
+            >
+              <option value="manual_handoff">manual_handoff</option>
+              <option value="greenhouse_stub">greenhouse_stub</option>
+              <option value="greenhouse">greenhouse</option>
+              <option value="lever">lever</option>
+              <option value="workday">workday</option>
+            </select>
+            {exportTarget !== "manual_handoff" ? (
+              <>
+                <label className="text-slate-700">Stub mode</label>
+                <select
+                  value={connectorSimulationMode}
+                  onChange={(event) =>
+                    setConnectorSimulationMode(
+                      event.target.value as "success" | "retryable_failure" | "non_retryable_failure"
+                    )
+                  }
+                  className="rounded border border-slate-300 px-2 py-1"
+                >
+                  <option value="success">success</option>
+                  <option value="retryable_failure">retryable_failure</option>
+                  <option value="non_retryable_failure">non_retryable_failure</option>
+                </select>
+              </>
+            ) : null}
             <button
               type="button"
               disabled={exporting || selectedCandidateIds.length === 0}
@@ -385,12 +423,20 @@ export function EmployerJobMatchesPage() {
               >
                 <div>
                   <p className="font-semibold text-slate-800">
-                    {entry.exportFormat.toUpperCase()} to {entry.exportTarget}
+                    {entry.exportFormat.toUpperCase()} via {entry.connectorType}
                   </p>
                   <p className="text-xs text-slate-600">
                     status: {entry.exportStatus} | candidates: {entry.candidateCount} |{" "}
                     {new Date(entry.createdAt).toLocaleString()}
                   </p>
+                  <p className="text-xs text-slate-600">
+                    external: {entry.externalSource ?? "-"} {entry.externalId ? `| ref ${entry.externalId}` : ""}
+                  </p>
+                  {entry.errorMessage ? (
+                    <p className="text-xs text-rose-700">
+                      {entry.errorType ?? "ERROR"}: {entry.errorMessage}
+                    </p>
+                  ) : null}
                 </div>
                 <button
                   type="button"
@@ -419,9 +465,23 @@ export function EmployerJobMatchesPage() {
               </button>
             </div>
             <p className="mt-1 text-xs text-slate-600">
-              {selectedExportDetail.export.exportFormat.toUpperCase()} | {selectedExportDetail.export.exportStatus} |{" "}
-              {selectedExportDetail.export.candidateCount} candidate(s)
+              {selectedExportDetail.export.exportFormat.toUpperCase()} | {selectedExportDetail.export.connectorType} |{" "}
+              {selectedExportDetail.export.exportStatus} | {selectedExportDetail.export.candidateCount} candidate(s)
             </p>
+            <p className="mt-1 text-xs text-slate-600">
+              External source: {selectedExportDetail.export.externalSource ?? "-"} | External id:{" "}
+              {selectedExportDetail.export.externalId ?? "-"}
+            </p>
+            {selectedExportDetail.export.connectorRequestPayload ? (
+              <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-2 text-xs text-slate-700">
+                {JSON.stringify(selectedExportDetail.export.connectorRequestPayload, null, 2)}
+              </pre>
+            ) : null}
+            {selectedExportDetail.export.connectorResponseSummary ? (
+              <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-2 text-xs text-slate-700">
+                {JSON.stringify(selectedExportDetail.export.connectorResponseSummary, null, 2)}
+              </pre>
+            ) : null}
             <div className="mt-2 space-y-2">
               {selectedExportDetail.items.slice(0, 5).map((item) => (
                 <div key={item.veteranProfileId} className="rounded border border-slate-100 bg-slate-50 p-2 text-sm">
